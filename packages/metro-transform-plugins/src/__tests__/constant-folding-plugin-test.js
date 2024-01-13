@@ -361,4 +361,24 @@ describe('constant expressions', () => {
 
     compare([constantFoldingPlugin], code, expected);
   });
+
+  it('does not fold away optional chained function calls marked with void', () => {
+    const code = `
+      function foo() {
+        let foo;
+      }
+
+      export const bar = void foo?.();
+    `;
+
+    const expected = `
+      function foo() {
+        let foo;
+      }
+
+      export const bar = void foo?.();
+    `;
+
+    compare([constantFoldingPlugin], code, expected);
+  });
 });
