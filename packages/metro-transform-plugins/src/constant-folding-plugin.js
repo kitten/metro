@@ -47,6 +47,7 @@ function constantFoldingPlugin(context: {
     path.traverse(
       {
         CallExpression: unsafe,
+        OptionalCallExpression: unsafe,
         AssignmentExpression: unsafe,
       },
       state,
