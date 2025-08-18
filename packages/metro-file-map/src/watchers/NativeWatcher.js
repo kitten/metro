@@ -13,7 +13,7 @@ import type {Dirent, FSWatcher, Stats} from 'fs';
 
 import {AbstractWatcher} from './AbstractWatcher';
 import {includedByGlob, typeFromStat} from './common';
-import {promises as fsPromises, watch} from 'fs';
+import {promises as fsPromises, watch, existsSync} from 'fs';
 import {platform} from 'os';
 import * as path from 'path';
 
@@ -51,11 +51,19 @@ export type ChangeEventEntry = $ReadOnly<{
 export default class NativeWatcher extends AbstractWatcher {
   #fsWatcher: ?FSWatcher;
   #tickHandle: ?TimeoutID;
-  #inputQueue: string[];
+  #tickTimeMs: number;
+  #inputRegister: Set<string>;
+  #inputQueue: [string, ?string][];
   #outputQueue: Omit<WatcherBackendChangeEvent, 'root'>[];
 
   static isSupported(): boolean {
-    return platform() === 'darwin';
+    switch (platform()) {
+      case 'darwin':
+      case 'win32':
+        return true;
+      default:
+        return false;
+    }
   }
 
   constructor(
@@ -68,15 +76,19 @@ export default class NativeWatcher extends AbstractWatcher {
     }>,
   ) {
     if (!NativeWatcher.isSupported) {
-      throw new Error('This watcher can only be used on macOS');
+      throw new Error('This watcher can only be used on macOS/Windows');
     }
     super(dir, opts);
     this.#tickHandle = null;
+    this.#tickTimeMs = 0;
+    this.#inputRegister = new Set();
     this.#inputQueue = [];
     this.#outputQueue = [];
   }
 
   async startWatching(): Promise<void> {
+    const isDarwin = platform() === 'darwin';
+    this.#tickTimeMs = isDarwin ? 0 : 60;
     this.#fsWatcher = watch(
       this.root,
       {
@@ -86,7 +98,13 @@ export default class NativeWatcher extends AbstractWatcher {
         // ~instant on macOS or Windows.
         recursive: true,
       },
-      (_event, relativePath) => this._receiveChangedPath(relativePath),
+      (event, relativePath) => {
+        if (relativePath != null) {
+          // Event is always 'rename' on darwin; ignore it
+          const eventName = !isDarwin ? event : null;
+          this._receiveChangedPath(relativePath, eventName);
+        }
+      },
     );
 
     debug('Watching %s', this.root);
@@ -102,22 +120,30 @@ export default class NativeWatcher extends AbstractWatcher {
     }
   }
 
-  _receiveChangedPath(relativePath: string) {
-    if (this.doIgnore(relativePath)) {
+  _receiveChangedPath(relativePath: string, eventName: ?string) {
+    if (this.#inputRegister.has(relativePath)) {
+      debug('Duplicate event on %s (root: %s)', relativePath, this.root);
+      if (this.#tickHandle && this.#inputQueue.length > 0) {
+        clearTimeout(this.#tickHandle);
+        this.#tickHandle = setTimeout(() => this._processTick(), this.#tickTimeMs);
+      }
+      return;
+    } else if (this.doIgnore(relativePath)) {
       debug('Ignoring event on %s (root: %s)', relativePath, this.root);
       return;
     }
     debug('Handling event on %s (root: %s)', relativePath, this.root);
-    this.#inputQueue.push(relativePath);
+    this.#inputQueue.push([relativePath, eventName]);
+    this.#inputRegister.add(relativePath);
     if (!this.#tickHandle) {
-      this.#tickHandle = setTimeout(() => this._processTick());
+      this.#tickHandle = setTimeout(() => this._processTick(), this.#tickTimeMs);
     }
   }
 
   _sendFileEvent(event: Omit<WatcherBackendChangeEvent, 'root'>) {
     this.#outputQueue.push(event);
     if (!this.#tickHandle) {
-      this.#tickHandle = setTimeout(() => this._processTick());
+      this.#tickHandle = setTimeout(() => this._processTick(), this.#tickTimeMs);
     }
   }
 
@@ -140,12 +166,14 @@ export default class NativeWatcher extends AbstractWatcher {
   async _processInputBatch() {
     const hardlinkCandidates: string[] = [];
     const inputQueue = this.#inputQueue.map(
-      async (relativePath: string): Promise<ChangeEventEntry | null> => {
+      async ([relativePath, eventName]): Promise<ChangeEventEntry | null> => {
         const absolutePath = path.resolve(this.root, relativePath);
         try {
           return {
             relativePath,
-            stat: await lstatOptional(absolutePath),
+            stat: eventName !== 'rename' || existsSync(absolutePath)
+              ? await lstatOptional(absolutePath)
+              : null,
           };
         } catch (error) {
           this.emitError(error);
@@ -154,6 +182,7 @@ export default class NativeWatcher extends AbstractWatcher {
       },
     );
     this.#inputQueue.length = 0;
+    this.#inputRegister.clear();
 
     const changeEvents = (await Promise.all(inputQueue)).filter(
       (change: ChangeEventEntry | null) => change != null,
