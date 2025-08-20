@@ -385,6 +385,11 @@ export type HasteMapItemMetadata = [/* path */ string, /* type */ number];
 
 export interface MutableFileSystem extends FileSystem {
   remove(filePath: Path): ?FileMetadata;
+  removeRecursive(filePath: Path): Iterable<{
+    baseName: string,
+    canonicalPath: string,
+    metadata: FileMetadata,
+  }>;
   addOrModify(filePath: Path, fileMetadata: FileMetadata): void;
   bulkAddOrModify(addedOrModifiedFiles: FileData): void;
 }

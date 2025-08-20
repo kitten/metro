@@ -479,6 +479,57 @@ export default class TreeFS implements MutableFileSystem {
     return isDirectory(node) ? null : node;
   }
 
+  *removeRecursive(mixedPath: Path): Iterable<{
+    baseName: string,
+    canonicalPath: string,
+    metadata: FileMetadata,
+  }> {
+    const normalPath = this._normalizePath(mixedPath);
+    const result = this._lookupByNormalPath(normalPath, {followLeaf: false});
+    if (!result.exists) {
+      return;
+    }
+    const {parentNode, canonicalPath, node} = result;
+    const baseName = path.basename(canonicalPath);
+    if (!isDirectory(node)) {
+      const metadata = this.remove(mixedPath);
+      if (metadata != null) {
+        yield {canonicalPath: normalPath, metadata, baseName};
+      }
+    } else {
+      yield* this._removeRecursive(node, canonicalPath);
+    }
+    if (parentNode != null) {
+      parentNode.delete(baseName);
+      if (parentNode.size === 0 && parentNode !== this.#rootNode) {
+        this.remove(path.dirname(canonicalPath));
+      }
+    }
+  }
+
+  *_removeRecursive(
+    rootNode: DirectoryNode,
+    prefix: string = '',
+  ): Iterable<{
+    baseName: string,
+    canonicalPath: string,
+    metadata: FileMetadata,
+  }> {
+    for (const [name, childNode] of rootNode) {
+      const prefixedName = prefix === '' ? name : prefix + path.sep + name;
+      if (isDirectory(childNode)) {
+        yield* this._removeRecursive(childNode, prefixedName);
+      } else {
+        yield {
+          canonicalPath: prefixedName,
+          metadata: childNode,
+          baseName: name,
+        };
+      }
+      rootNode.delete(name); // Not strictly needed, but let's clean up as we go
+    }
+  }
+
   /**
    * The core traversal algorithm of TreeFS - takes a normal path and traverses
    * through a tree of maps keyed on path segments, returning the node,
