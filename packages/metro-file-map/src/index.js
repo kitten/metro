@@ -53,7 +53,6 @@ import {Watcher} from './Watcher';
 import EventEmitter from 'events';
 import {promises as fsPromises} from 'fs';
 import invariant from 'invariant';
-import nullthrows from 'nullthrows';
 import * as path from 'path';
 import {performance} from 'perf_hooks';
 
@@ -582,9 +581,10 @@ export default class FileMap extends EventEmitter {
     this._startupPerfLogger?.point('applyFileDelta_remove_start');
     const removed: Array<[string, FileMetadata]> = [];
     for (const relativeFilePath of removedFiles) {
-      const metadata = fileSystem.remove(relativeFilePath);
-      if (metadata) {
-        removed.push([relativeFilePath, metadata]);
+      for (const {canonicalPath, metadata} of fileSystem.removeRecursive(
+        relativeFilePath,
+      )) {
+        removed.push([canonicalPath, metadata]);
       }
     }
     this._startupPerfLogger?.point('applyFileDelta_remove_end');
@@ -681,9 +681,10 @@ export default class FileMap extends EventEmitter {
     }
     for (const relativeFilePath of missingFiles) {
       changedFiles.delete(relativeFilePath);
-      const metadata = fileSystem.remove(relativeFilePath);
-      if (metadata) {
-        removed.push([relativeFilePath, metadata]);
+      for (const {canonicalPath, metadata} of fileSystem.removeRecursive(
+        relativeFilePath,
+      )) {
+        removed.push([canonicalPath, metadata]);
       }
     }
     this._startupPerfLogger?.point('applyFileDelta_missing_end');
@@ -806,11 +807,8 @@ export default class FileMap extends EventEmitter {
     const onChange = (change: WatcherBackendChangeEvent) => {
       if (
         change.metadata &&
-        // Ignore all directory events
-        (change.metadata.type === 'd' ||
-          // Ignore regular files with unwatched extensions
-          (change.metadata.type === 'f' &&
-            !hasWatchedExtension(change.relativePath)) ||
+        ((change.metadata.type === 'f' &&
+          !hasWatchedExtension(change.relativePath)) ||
           // Don't emit events relating to symlinks if enableSymlinks: false
           (!this._options.enableSymlinks && change.metadata?.type === 'l'))
       ) {
@@ -878,9 +876,12 @@ export default class FileMap extends EventEmitter {
 
           const linkStats = fileSystem.linkStats(relativeFilePath);
 
-          const enqueueEvent = (metadata: ChangeEventMetadata) => {
+          const enqueueEvent = (
+            filePath: string,
+            metadata: ChangeEventMetadata,
+          ) => {
             const event = {
-              filePath: absoluteFilePath,
+              filePath,
               metadata,
               type: eventTypeToEmit,
             };
@@ -915,7 +916,10 @@ export default class FileMap extends EventEmitter {
             ];
 
             try {
-              if (change.metadata.type === 'l') {
+              if (change.metadata.type === 'd') {
+                // Directories won't need change events to be emitted
+                return null;
+              } else if (change.metadata.type === 'l') {
                 await this._maybeReadLink(absoluteFilePath, fileMetadata);
               } else {
                 await this._fileProcessor.processRegularFile(
@@ -933,7 +937,7 @@ export default class FileMap extends EventEmitter {
               plugins.forEach(plugin =>
                 plugin.onNewOrModifiedFile(relativeFilePath, fileMetadata),
               );
-              enqueueEvent(change.metadata);
+              enqueueEvent(absoluteFilePath, change.metadata);
             } catch (e) {
               if (!['ENOENT', 'EACCESS'].includes(e.code)) {
                 throw e;
@@ -951,19 +955,27 @@ export default class FileMap extends EventEmitter {
               // This is expected for deletion of an ignored file.
               return null;
             }
+            this._updateClock(clocks, change.clock);
             // We've already checked linkStats != null above, so the file
             // exists in the file map and remove should always return metadata.
-            const metadata = nullthrows(fileSystem.remove(relativeFilePath));
-            this._updateClock(clocks, change.clock);
-            plugins.forEach(plugin =>
-              plugin.onRemovedFile(relativeFilePath, metadata),
-            );
-
-            enqueueEvent({
-              modifiedTime: null,
-              size: null,
-              type: linkStats.fileType,
-            });
+            for (const {canonicalPath, metadata} of fileSystem.removeRecursive(
+              relativeFilePath,
+            )) {
+              plugins.forEach(plugin =>
+                plugin.onRemovedFile(canonicalPath, metadata),
+              );
+              enqueueEvent(
+                path.join(
+                  change.root,
+                  normalizePathSeparatorsToSystem(change.relativePath),
+                ),
+                {
+                  modifiedTime: null,
+                  size: null,
+                  type: linkStats.fileType,
+                },
+              );
+            }
           } else {
             throw new Error(
               `metro-file-map: Unrecognized event type from watcher: ${change.event}`,
