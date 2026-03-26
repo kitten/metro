@@ -24,6 +24,7 @@ import type {
   Console,
   CrawlerOptions,
   CrawlResult,
+  FallbackFilesystem,
   FileData,
   FileMapPlugin,
   FileMapPluginWorker,
@@ -76,6 +77,7 @@ export type {
 
 export type InputOptions = Readonly<{
   computeSha1?: ?boolean,
+  enableFallback?: ?boolean,
   enableSymlinks?: ?boolean,
   extensions: ReadonlyArray<string>,
   forceNodeFilesystemAPI?: ?boolean,
@@ -106,6 +108,7 @@ type HealthCheckOptions = Readonly<{
 
 type InternalOptions = Readonly<{
   ...BuildParameters,
+  enableFallback: boolean,
   healthCheck: HealthCheckOptions,
   perfLoggerFactory: ?PerfLoggerFactory,
   resetCache: ?boolean,
@@ -328,6 +331,7 @@ export default class FileMap extends EventEmitter {
 
     this.#options = {
       ...buildParameters,
+      enableFallback: options.enableFallback === true,
       healthCheck: options.healthCheck,
       perfLoggerFactory: options.perfLoggerFactory,
       resetCache: options.resetCache,

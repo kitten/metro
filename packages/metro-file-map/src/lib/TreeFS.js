@@ -10,6 +10,7 @@
 
 import type {
   CacheData,
+  FallbackFilesystem,
   FileData,
   FileMetadata,
   FileStats,
@@ -47,12 +48,16 @@ type DeserializedSnapshotInput = {
   rootDir: string,
   fileSystemData: DirectoryNode,
   processFile: ProcessFileFunction,
+  fallbackFilesystem?: ?FallbackFilesystem,
+  roots?: ReadonlyArray<string>,
 };
 
 type TreeFSOptions = {
   rootDir: Path,
   files?: FileData,
   processFile: ProcessFileFunction,
+  fallbackFilesystem?: ?FallbackFilesystem,
+  roots?: ReadonlyArray<string>,
 };
 
 type MatchFilesOptions = Readonly<{
@@ -126,16 +131,22 @@ type MetadataIteratorOptions = Readonly<{
 export default class TreeFS implements MutableFileSystem {
   +#cachedNormalSymlinkTargets: WeakMap<FileNode, NormalizedSymlinkTarget> =
     new WeakMap();
+  +#fallbackFilesystem: ?FallbackFilesystem;
   +#pathUtils: RootPathUtils;
   +#processFile: ProcessFileFunction;
   +#rootDir: Path;
   #rootNode: DirectoryNode = new Map();
+  +#roots: ReadonlyArray<string>;
 
   constructor(opts: TreeFSOptions) {
-    const {rootDir, files, processFile} = opts;
+    const {rootDir, files, processFile, fallbackFilesystem, roots} = opts;
     this.#rootDir = rootDir;
     this.#pathUtils = new RootPathUtils(rootDir);
     this.#processFile = processFile;
+    this.#fallbackFilesystem = fallbackFilesystem ?? null;
+    this.#roots = (roots ?? []).map(root =>
+      this.#pathUtils.absoluteToNormal(root),
+    );
     if (files != null) {
       this.bulkAddOrModify(files);
     }
@@ -146,8 +157,9 @@ export default class TreeFS implements MutableFileSystem {
   }
 
   static fromDeserializedSnapshot(args: DeserializedSnapshotInput): TreeFS {
-    const {rootDir, fileSystemData, processFile} = args;
-    const tfs = new TreeFS({processFile, rootDir});
+    const {rootDir, fileSystemData, processFile, fallbackFilesystem, roots} =
+      args;
+    const tfs = new TreeFS({processFile, rootDir, fallbackFilesystem, roots});
     tfs.#rootNode = fileSystemData;
     return tfs;
   }

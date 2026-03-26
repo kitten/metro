@@ -47,6 +47,7 @@ export type {
 };
 export type InputOptions = Readonly<{
   computeSha1?: null | undefined | boolean;
+  enableFallback?: null | undefined | boolean;
   enableSymlinks?: null | undefined | boolean;
   extensions: ReadonlyArray<string>;
   forceNodeFilesystemAPI?: null | undefined | boolean;
