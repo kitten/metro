@@ -397,6 +397,61 @@ describe('node crawler', () => {
     expect(fs.lstat).toHaveBeenCalledTimes(2);
   });
 
+  test('crawls without stat when skipStat is true (cold start)', async () => {
+    childProcess = require('child_process');
+    nodeCrawl = require('../node').default;
+
+    const {changedFiles, removedFiles} = await nodeCrawl({
+      console: global.console,
+      previousState: {fileSystem: emptyFS},
+      extensions: ['js'],
+      ignore: pearMatcher,
+      rootDir,
+      roots: ['/project/fruits'],
+      skipStat: true,
+    });
+
+    // Should not use native find
+    expect(childProcess.spawn).not.toHaveBeenCalled();
+
+    // Files should have null mtime and 0 size
+    expect(changedFiles).toEqual(
+      createMap({
+        'fruits/directory/strawberry.js': [null, 0, 0, null, 0, null],
+        'fruits/tomato.js': [null, 0, 0, null, 0, null],
+      }),
+    );
+    expect(removedFiles).toEqual(new Set());
+
+    // lstat should not have been called
+    const fs = require('graceful-fs');
+    expect(fs.lstat).not.toHaveBeenCalled();
+  });
+
+  test('detects symlinks via Dirent when skipStat is true', async () => {
+    nodeCrawl = require('../node').default;
+
+    const {changedFiles} = await nodeCrawl({
+      console: global.console,
+      previousState: {fileSystem: emptyFS},
+      extensions: ['js'],
+      ignore: pearMatcher,
+      includeSymlinks: true,
+      rootDir,
+      roots: ['/project/fruits'],
+      skipStat: true,
+    });
+
+    // symlink should be included with H.SYMLINK = 1
+    expect(changedFiles).toEqual(
+      createMap({
+        'fruits/directory/strawberry.js': [null, 0, 0, null, 0, null],
+        'fruits/tomato.js': [null, 0, 0, null, 0, null],
+        'fruits/symlink': [null, 0, 0, null, 1, null],
+      }),
+    );
+  });
+
   test('aborts the crawl on pre-aborted signal', async () => {
     nodeCrawl = require('../node').default;
     const err = new Error('aborted for test');

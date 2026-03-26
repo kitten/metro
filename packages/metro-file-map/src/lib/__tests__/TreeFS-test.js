@@ -22,6 +22,12 @@ import H from '../../constants';
 let mockPathModule;
 jest.mock('path', () => mockPathModule);
 
+const mockLstatSync = jest.fn();
+jest.mock('fs', () => ({
+  ...jest.requireActual('fs'),
+  lstatSync: mockLstatSync,
+}));
+
 describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
   // Convenience function to write paths with posix separators but convert them
   // to system separators
@@ -35,6 +41,7 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
 
   beforeEach(() => {
     jest.resetModules();
+    mockLstatSync.mockReset();
     mockPathModule = jest.requireActual<{}>('path')[platform];
     TreeFS = require('../TreeFS').default;
     tfs = new TreeFS({
@@ -379,6 +386,68 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       const withUndefined = tfs.getDifference(newFiles);
 
       expect(withEmpty).toEqual(withUndefined);
+    });
+
+    test('lazy-stats files with null mtime (skipStat mode, warm start)', () => {
+      // bar.js: cached mtime 234, lazy stat returns 234 → unchanged
+      // foo/another.js: cached mtime 123, lazy stat returns 999 → changed
+      mockLstatSync.mockImplementation((filePath: string) => {
+        const normalized = filePath.replace(/\\/g, '/');
+        if (normalized.endsWith('/bar.js')) {
+          return {mtime: {getTime: () => 234}, size: 3};
+        }
+        if (normalized.endsWith('/another.js')) {
+          return {mtime: {getTime: () => 999}, size: 5};
+        }
+        throw Object.assign(new Error('ENOENT'), {code: 'ENOENT'});
+      });
+
+      const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
+        [p('bar.js'), [null, 0, 0, null, 0, null]],
+        [p('foo/another.js'), [null, 0, 0, null, 0, null]],
+      ]);
+
+      const result = tfs.getDifference(newFiles);
+
+      expect(result.changedFiles.has(p('bar.js'))).toBe(false);
+      expect(result.changedFiles.has(p('foo/another.js'))).toBe(true);
+      expect(result.changedFiles.get(p('foo/another.js'))?.[H.MTIME]).toBe(
+        999,
+      );
+      expect(result.changedFiles.get(p('foo/another.js'))?.[H.SIZE]).toBe(5);
+    });
+
+    test('cold start with null mtime does not stat any files', () => {
+      const emptyTfs = new TreeFS({
+        rootDir: p('/project'),
+        files: new Map<CanonicalPath, FileMetadata>(),
+      });
+
+      const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
+        [p('bar.js'), [null, 0, 0, null, 0, null]],
+        [p('foo/another.js'), [null, 0, 0, null, 0, null]],
+      ]);
+
+      const result = emptyTfs.getDifference(newFiles);
+
+      expect(mockLstatSync).not.toHaveBeenCalled();
+      expect(result.changedFiles.size).toBe(2);
+      expect(result.removedFiles.size).toBe(0);
+    });
+
+    test('handles ENOENT (file disappeared between crawl and diff)', () => {
+      mockLstatSync.mockImplementation(() => {
+        throw Object.assign(new Error('ENOENT'), {code: 'ENOENT'});
+      });
+
+      const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
+        [p('bar.js'), [null, 0, 0, null, 0, null]],
+      ]);
+
+      const result = tfs.getDifference(newFiles);
+
+      expect(result.removedFiles.has(p('bar.js'))).toBe(true);
+      expect(result.changedFiles.has(p('bar.js'))).toBe(false);
     });
   });
 
