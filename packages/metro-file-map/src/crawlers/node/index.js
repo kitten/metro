@@ -170,6 +170,77 @@ function findNative(
   });
 }
 
+/**
+ * Crawl the filesystem using readdir with Dirent entries, without calling
+ * lstat on each file. Produces FileMetadata with null mtime and zero size.
+ * Symlinks are detected via Dirent.isSymbolicLink().
+ */
+function findWithoutStat(
+  roots: ReadonlyArray<string>,
+  extensions: ReadonlyArray<string>,
+  ignore: IgnoreMatcher,
+  includeSymlinks: boolean,
+  rootDir: string,
+  console: Console,
+  callback: Callback,
+): void {
+  const result: FileData = new Map();
+  let activeCalls = 0;
+  const pathUtils = new RootPathUtils(rootDir);
+
+  function search(directory: string): void {
+    activeCalls++;
+    fs.readdir(directory, {withFileTypes: true}, (err, entries) => {
+      activeCalls--;
+      if (err) {
+        console.warn(
+          `Error "${err.code ?? err.message}" reading contents of "${directory}", skipping. Add this directory to your ignore list to exclude it.`,
+        );
+      } else {
+        entries.forEach((entry: fs.Dirent) => {
+          const file = path.join(directory, entry.name.toString());
+
+          if (ignore(file)) {
+            return;
+          }
+
+          if (entry.isSymbolicLink() && !includeSymlinks) {
+            return;
+          }
+
+          if (entry.isDirectory()) {
+            search(file);
+            return;
+          }
+
+          const isSymlink = entry.isSymbolicLink();
+          const ext = path.extname(file).substr(1);
+          if (isSymlink || extensions.includes(ext)) {
+            result.set(pathUtils.absoluteToNormal(file), [
+              null, // H.MTIME — deferred to getDifference
+              0, // H.SIZE — unknown
+              0, // H.VISITED
+              null, // H.SHA1
+              isSymlink ? 1 : 0, // H.SYMLINK — from Dirent
+              null, // H.PLUGINDATA
+            ]);
+          }
+        });
+      }
+
+      if (activeCalls === 0) {
+        callback(result);
+      }
+    });
+  }
+
+  if (roots.length > 0) {
+    roots.forEach(search);
+  } else {
+    callback(result);
+  }
+}
+
 export default async function nodeCrawl(
   options: CrawlerOptions,
 ): Promise<CrawlResult> {
