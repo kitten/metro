@@ -140,6 +140,7 @@ export class Watcher extends EventEmitter {
       previousState: crawlOptions.previousState,
       rootDir: options.rootDir,
       roots: crawlOptions.roots,
+      skipStat: true,
       subpath,
     };
 
