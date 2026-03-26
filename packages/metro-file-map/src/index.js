@@ -44,6 +44,7 @@ import type {
 } from './flow-types';
 
 import {DiskCacheManager} from './cache/DiskCacheManager';
+import createFallbackFilesystem from './crawlers/node/fallback';
 import H from './constants';
 import checkWatchmanCapabilities from './lib/checkWatchmanCapabilities';
 import {FileProcessor} from './lib/FileProcessor';
@@ -396,6 +397,17 @@ export default class FileMap extends EventEmitter {
           this.emit('metadata');
           return result?.content;
         };
+        const fallbackFilesystem = this.#options.enableFallback
+          ? createFallbackFilesystem({
+              extensions: this.#options.extensions,
+              // Only apply ignorePattern, not the node_modules exclusion.
+              // The fallback is specifically for discovering files outside
+              // crawled roots (primarily node_modules).
+              ignore: filePath => this.#options.ignorePattern.test(filePath),
+              includeSymlinks: this.#options.enableSymlinks,
+            })
+          : null;
+        const roots = this.#options.roots;
         const fileSystem =
           initialData != null
             ? TreeFS.fromDeserializedSnapshot({
@@ -406,8 +418,10 @@ export default class FileMap extends EventEmitter {
                 fileSystemData: initialData.fileSystemData,
                 processFile,
                 rootDir,
+                fallbackFilesystem,
+                roots,
               })
-            : new TreeFS({processFile, rootDir});
+            : new TreeFS({processFile, rootDir, fallbackFilesystem, roots});
         this.#startupPerfLogger?.point('constructFileSystem_end');
 
         const plugins = this.#plugins;
