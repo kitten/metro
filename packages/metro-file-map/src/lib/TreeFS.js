@@ -207,10 +207,9 @@ export default class TreeFS implements MutableFileSystem {
         // Lazy-stat: when the crawler didn't provide mtime (skipStat mode),
         // stat the file on-demand to populate mtime and size for comparison.
         if (newMetadata[H.MTIME] == null) {
+          const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);
           try {
-            const stat = fs.lstatSync(
-              this.#pathUtils.normalToAbsolute(canonicalPath),
-            );
+            const stat = fs.lstatSync(absolutePath);
             newMetadata[H.MTIME] = stat.mtime.getTime();
             newMetadata[H.SIZE] = stat.size;
           } catch {
@@ -219,6 +218,20 @@ export default class TreeFS implements MutableFileSystem {
             changedFiles.delete(canonicalPath);
             removedFiles.add(canonicalPath);
             continue;
+          }
+          // If the crawler reported a symlink without a target (numeric
+          // flag only), read the target now so that it is available if
+          // the entry is kept in changedFiles and later inserted into
+          // the tree.
+          if (newMetadata[H.SYMLINK] === 1) {
+            try {
+              newMetadata[H.SYMLINK] = fs.readlinkSync(absolutePath);
+            } catch {
+              files.delete(canonicalPath);
+              changedFiles.delete(canonicalPath);
+              removedFiles.add(canonicalPath);
+              continue;
+            }
           }
         }
 
