@@ -124,6 +124,7 @@ export type CrawlerOptions = {
   }>,
   rootDir: string,
   roots: ReadonlyArray<string>,
+  skipStat?: boolean,
   onStatus: (status: WatcherStatus) => void,
   // Only consider files under this normalized subdirectory when computing
   // removedFiles. If not provided, all files in the file system are considered.
