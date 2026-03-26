@@ -255,18 +255,21 @@ export default async function nodeCrawl(
     perfLogger,
     roots,
     abortSignal,
+    skipStat,
     subpath,
   } = options;
 
   abortSignal?.throwIfAborted();
 
   perfLogger?.point('nodeCrawl_start');
+
   const useNativeFind =
+    !skipStat &&
     !forceNodeFilesystemAPI &&
     platform() !== 'win32' &&
     (await hasNativeFindSupport());
 
-  debug('Using system find: %s', useNativeFind);
+  debug('Using system find: %s, skipStat: %s', useNativeFind, !!skipStat);
 
   return new Promise((resolve, reject) => {
     const callback: Callback = fileData => {
@@ -285,7 +288,17 @@ export default async function nodeCrawl(
       resolve(difference);
     };
 
-    if (useNativeFind) {
+    if (skipStat) {
+      findWithoutStat(
+        roots,
+        extensions,
+        ignore,
+        includeSymlinks,
+        rootDir,
+        console,
+        callback,
+      );
+    } else if (useNativeFind) {
       findNative(
         roots,
         extensions,
