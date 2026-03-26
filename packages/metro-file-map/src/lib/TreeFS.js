@@ -640,7 +640,7 @@ export default class TreeFS implements MutableFileSystem {
         continue;
       }
 
-      let segmentNode = parentNode.get(segmentName);
+      let segmentNode: ?MixedNode = parentNode.get(segmentName);
 
       // In normal paths all indirections are at the prefix, so we are at the
       // nth ancestor of the root iff the path so far is n '..' segments.
@@ -652,23 +652,45 @@ export default class TreeFS implements MutableFileSystem {
 
       if (segmentNode == null) {
         if (opts.makeDirectories !== true && segmentName !== '..') {
-          return {
-            canonicalMissingPath: isLastSegment
-              ? targetNormalPath
-              : targetNormalPath.slice(0, fromIdx - 1),
-            exists: false,
-            missingSegmentName: segmentName,
-          };
-        }
-        segmentNode = new Map();
-        if (opts.makeDirectories === true) {
-          if (changeListener != null) {
-            const canonicalPath = isLastSegment
-              ? targetNormalPath
-              : targetNormalPath.slice(0, fromIdx - 1);
-            changeListener.directoryAdded(canonicalPath);
+          if (this.#fallbackFilesystem != null) {
+            const parentEnd = isLastSegment
+              ? fromIdx - segmentName.length - 1
+              : fromIdx - segmentName.length - 2;
+            const parentCanonicalPath =
+              parentEnd > 0
+                ? targetNormalPath.slice(0, parentEnd)
+                : '';
+            segmentNode = this.#populateFromFilesystem(
+              parentNode,
+              segmentName,
+              parentCanonicalPath,
+            );
+            if (segmentNode != null) {
+              ancestorOfRootIdx = null;
+            }
           }
-          parentNode.set(segmentName, segmentNode);
+
+          if (segmentNode == null) {
+            return {
+              canonicalMissingPath: isLastSegment
+                ? targetNormalPath
+                : targetNormalPath.slice(0, fromIdx - 1),
+              exists: false,
+              missingSegmentName: segmentName,
+            };
+          }
+        }
+        if (segmentNode == null) {
+          segmentNode = new Map();
+          if (opts.makeDirectories === true) {
+            if (changeListener != null) {
+              const canonicalPath = isLastSegment
+                ? targetNormalPath
+                : targetNormalPath.slice(0, fromIdx - 1);
+              changeListener.directoryAdded(canonicalPath);
+            }
+            parentNode.set(segmentName, segmentNode);
+          }
         }
       }
 
@@ -1145,6 +1167,16 @@ export default class TreeFS implements MutableFileSystem {
   ): Iterable<Path> {
     const pathSep = opts.alwaysYieldPosix ? '/' : path.sep;
     const prefixWithSep = pathPrefix === '' ? pathPrefix : pathPrefix + pathSep;
+
+    if (this.#fallbackFilesystem != null && iterationRootNode.size === 0) {
+      const canonicalRoot = opts.canonicalPathOfRoot;
+      const rootCanonical =
+        pathPrefix === ''
+          ? canonicalRoot
+          : path.join(canonicalRoot, pathPrefix);
+      this.#populateDirFromFilesystem(iterationRootNode, rootCanonical);
+    }
+
     for (const [name, node] of this.#directoryNodeIterator(
       iterationRootNode,
       iterationRootParentNode,
@@ -1208,6 +1240,17 @@ export default class TreeFS implements MutableFileSystem {
           }
         }
       } else if (opts.recursive) {
+        if (this.#fallbackFilesystem != null && node.size === 0) {
+          const nodePathWithSystemSeparators =
+            pathSep === path.sep
+              ? nodePath
+              : nodePath.replaceAll(pathSep, path.sep);
+          const canonicalPath = path.join(
+            opts.canonicalPathOfRoot,
+            nodePathWithSystemSeparators,
+          );
+          this.#populateDirFromFilesystem(node, canonicalPath);
+        }
         yield* this.#pathIterator(
           node,
           iterationRootParentNode,
@@ -1280,5 +1323,98 @@ export default class TreeFS implements MutableFileSystem {
       }
     }
     return clone;
+  }
+
+  /**
+   * Check whether a given normal (root-relative) path falls inside any of the
+   * crawl roots. The fallback filesystem should not be consulted for paths
+   * inside roots, because those are already covered by the initial crawl and
+   * the watcher.
+   */
+  #isInsideRoots(normalPath: string): boolean {
+    for (const root of this.#roots) {
+      if (
+        normalPath === root ||
+        normalPath.startsWith(root + path.sep) ||
+        // normalPath is an ancestor of a root (e.g. looking up '' when root
+        // is 'packages/foo') — the crawl already covers this subtree.
+        root.startsWith(normalPath + path.sep)
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Synchronously populate a missing tree node by querying the injected
+   * fallback filesystem. The fallback returns tree-compatible nodes
+   * (FileMetadata tuples or directory Maps) that are inserted directly.
+   *
+   * Returns the newly created node, or null if the path doesn't exist on disk.
+   */
+  #populateFromFilesystem(
+    parentNode: DirectoryNode,
+    segmentName: string,
+    parentCanonicalPath: string,
+  ): ?MixedNode {
+    const fallback = this.#fallbackFilesystem;
+    if (fallback == null) {
+      return null;
+    }
+    const childCanonicalPath =
+      parentCanonicalPath === ''
+        ? segmentName
+        : parentCanonicalPath + path.sep + segmentName;
+    if (this.#isInsideRoots(childCanonicalPath)) {
+      return null;
+    }
+    const parentAbsolute =
+      this.#pathUtils.normalToAbsolute(parentCanonicalPath);
+    const absolutePath = path.join(parentAbsolute, segmentName);
+
+    const result = fallback.lookup(absolutePath);
+    if (result == null) {
+      return null;
+    }
+    let node: MixedNode;
+    if (result === 'd') {
+      // Insert an empty directory sentinel — children are populated lazily
+      // on access via subsequent #populateFromFilesystem calls or via
+      // #populateDirFromFilesystem during iteration.
+      node = new Map();
+    } else {
+      node = result;
+    }
+    parentNode.set(segmentName, node);
+    return node;
+  }
+
+  /**
+   * Populate an existing (potentially empty sentinel) directory node from
+   * the filesystem. Used by #pathIterator to fill lazy directories before
+   * iteration.
+   */
+  #populateDirFromFilesystem(
+    dirNode: DirectoryNode,
+    canonicalPath: string,
+  ): void {
+    const fallback = this.#fallbackFilesystem;
+    if (fallback == null) {
+      return;
+    }
+    if (this.#isInsideRoots(canonicalPath)) {
+      return;
+    }
+    const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);
+    const entries = fallback.readdir(absolutePath);
+    if (entries == null) {
+      return;
+    }
+    for (const [name, entry] of entries) {
+      if (!dirNode.has(name)) {
+        dirNode.set(name, entry === 'd' ? new Map() : entry);
+      }
+    }
   }
 }
