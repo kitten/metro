@@ -1235,4 +1235,284 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       });
     });
   });
+
+  describe('filesystem fallback (fallbackFilesystem)', () => {
+    let fallbackTfs: TreeFSType;
+    let mockLookup: JestMockFn<[string], 'd' | FileMetadata | null>;
+    let mockReaddir: JestMockFn<
+      [string],
+      ?Map<string, FileMetadata | 'd'>,
+    >;
+
+    beforeEach(() => {
+      mockLookup = jest.fn(() => null);
+      mockReaddir = jest.fn(() => null);
+      fallbackTfs = new TreeFS({
+        rootDir: p('/project'),
+        files: new Map<CanonicalPath, FileMetadata>([
+          [p('src/index.js'), [100, 10, 0, null, 0, null]],
+        ]),
+        processFile: () => {
+          throw new Error('Not implemented');
+        },
+        fallbackFilesystem: {lookup: mockLookup, readdir: mockReaddir},
+      });
+    });
+
+    test('falls back to filesystem for missing file', () => {
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/missing.js')) {
+          return [200, 42, 0, null, 0, null];
+        }
+        return null;
+      });
+
+      const result = fallbackTfs.lookup(p('/project/src/missing.js'));
+      expect(result.exists).toBe(true);
+      if (result.exists) {
+        expect(result.type).toBe('f');
+      }
+      expect(mockLookup).toHaveBeenCalledWith(
+        p('/project/src/missing.js'),
+      );
+    });
+
+    test('subsequent lookup is pure in-memory (no second fallback call)', () => {
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/missing.js')) {
+          return [200, 42, 0, null, 0, null];
+        }
+        return null;
+      });
+
+      fallbackTfs.lookup(p('/project/src/missing.js'));
+      mockLookup.mockReset();
+
+      const result = fallbackTfs.lookup(p('/project/src/missing.js'));
+      expect(result.exists).toBe(true);
+      expect(mockLookup).not.toHaveBeenCalled();
+    });
+
+    test('falls back for directory traversal using lookup', () => {
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/lib')) {
+          return 'd';
+        }
+        if (normalized.endsWith('/utils.js')) {
+          return [0, 0, 0, null, 0, null];
+        }
+        return null;
+      });
+
+      const result = fallbackTfs.lookup(p('/project/src/lib/utils.js'));
+      expect(result.exists).toBe(true);
+      if (result.exists) {
+        expect(result.type).toBe('f');
+      }
+      // lookup is called per segment — once for 'lib' (dir) and once for 'utils.js' (file)
+      expect(mockLookup).toHaveBeenCalledTimes(2);
+      // readdir is NOT called during traversal
+      expect(mockReaddir).not.toHaveBeenCalled();
+    });
+
+    test('negative lookup returns {exists: false} after checking filesystem', () => {
+      const result = fallbackTfs.lookup(p('/project/src/nonexistent.js'));
+      expect(result.exists).toBe(false);
+      expect(mockLookup).toHaveBeenCalled();
+    });
+
+    test('negative lookup in fallback-populated dir does not re-check', () => {
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/newdir')) {
+          return 'd';
+        }
+        if (normalized.endsWith('/exists.js')) {
+          return [0, 0, 0, null, 0, null];
+        }
+        return null;
+      });
+
+      // Populate the directory via fallback
+      fallbackTfs.lookup(p('/project/newdir/exists.js'));
+      mockLookup.mockReset();
+
+      // File not in directory — lookup called for 'missing.js' but newdir
+      // already exists in tree, so only one lookup for the missing file
+      const result = fallbackTfs.lookup(p('/project/newdir/missing.js'));
+      expect(result.exists).toBe(false);
+    });
+
+    test('matchFiles uses readdir to populate sentinel directories', () => {
+      // First, create an empty sentinel via lookup
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/lib')) {
+          return 'd';
+        }
+        if (normalized.endsWith('/helper.js')) {
+          return [0, 0, 0, null, 0, null];
+        }
+        return null;
+      });
+
+      // Trigger the fallback to create lib as empty sentinel
+      fallbackTfs.lookup(p('/project/src/lib/helper.js'));
+
+      // Set up readdir for the iteration phase
+      mockReaddir.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/lib')) {
+          const entries: Map<string, FileMetadata | 'd'> = new Map();
+          entries.set('helper.js', [0, 0, 0, null, 0, null]);
+          entries.set('extra.js', [0, 0, 0, null, 0, null]);
+          return entries;
+        }
+        return null;
+      });
+
+      // matchFiles should use readdir to populate the directory
+      const files = [
+        ...fallbackTfs.matchFiles({
+          rootDir: p('/project/src/lib'),
+        }),
+      ];
+      expect(files).toContain(p('/project/src/lib/helper.js'));
+    });
+
+    test('does not fall back when fallbackFilesystem is not provided', () => {
+      const noFallbackTfs = new TreeFS({
+        rootDir: p('/project'),
+        files: new Map<CanonicalPath, FileMetadata>([
+          [p('src/index.js'), [100, 10, 0, null, 0, null]],
+        ]),
+        processFile: () => {
+          throw new Error('Not implemented');
+        },
+      });
+
+      const result = noFallbackTfs.lookup(p('/project/src/missing.js'));
+      expect(result.exists).toBe(false);
+      expect(mockLookup).not.toHaveBeenCalled();
+    });
+
+    test('handles symlinks discovered via fallback', () => {
+      mockLookup.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/link.js')) {
+          return [200, 10, 0, null, p('./index.js'), null];
+        }
+        return null;
+      });
+
+      const result = fallbackTfs.lookup(p('/project/src/link.js'));
+      expect(result.exists).toBe(true);
+      if (result.exists) {
+        expect(result.type).toBe('f');
+      }
+    });
+
+    describe('root scoping', () => {
+      let scopedTfs: TreeFSType;
+      let scopedLookup: JestMockFn<[string], 'd' | FileMetadata | null>;
+      let scopedReaddir: JestMockFn<
+        [string],
+        ?Map<string, FileMetadata | 'd'>,
+      >;
+
+      beforeEach(() => {
+        scopedLookup = jest.fn(() => null);
+        scopedReaddir = jest.fn(() => null);
+        scopedTfs = new TreeFS({
+          rootDir: p('/project'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+          fallbackFilesystem: {
+            lookup: scopedLookup,
+            readdir: scopedReaddir,
+          },
+          roots: [p('/project/src')],
+        });
+      });
+
+      test('does not fall back for paths inside roots', () => {
+        const result = scopedTfs.lookup(p('/project/src/missing.js'));
+        expect(result.exists).toBe(false);
+        expect(scopedLookup).not.toHaveBeenCalled();
+      });
+
+      test('falls back for paths outside roots', () => {
+        scopedLookup.mockImplementation((absPath: string) => {
+          const normalized = absPath.replace(/\\/g, '/');
+          if (normalized.endsWith('/node_modules')) {
+            return 'd';
+          }
+          if (normalized.endsWith('/foo')) {
+            return 'd';
+          }
+          if (normalized.endsWith('/index.js')) {
+            return [0, 0, 0, null, 0, null];
+          }
+          return null;
+        });
+
+        const result = scopedTfs.lookup(
+          p('/project/node_modules/foo/index.js'),
+        );
+        expect(result.exists).toBe(true);
+        expect(scopedLookup).toHaveBeenCalled();
+      });
+
+      test('does not fall back for directories inside roots', () => {
+        const result = scopedTfs.lookup(p('/project/src/lib/utils.js'));
+        expect(result.exists).toBe(false);
+        expect(scopedLookup).not.toHaveBeenCalled();
+      });
+
+      test('handles multiple roots correctly', () => {
+        const multiLookup: JestMockFn<
+          [string],
+          'd' | FileMetadata | null,
+        > = jest.fn(() => null);
+        const multiReaddir: JestMockFn<
+          [string],
+          ?Map<string, FileMetadata | 'd'>,
+        > = jest.fn(() => null);
+        const multiRootTfs = new TreeFS({
+          rootDir: p('/project'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+            [p('lib/helper.js'), [100, 10, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+          fallbackFilesystem: {
+            lookup: multiLookup,
+            readdir: multiReaddir,
+          },
+          roots: [p('/project/src'), p('/project/lib')],
+        });
+
+        // Inside first root — no fallback
+        multiRootTfs.lookup(p('/project/src/missing.js'));
+        expect(multiLookup).not.toHaveBeenCalled();
+
+        // Inside second root — no fallback
+        multiRootTfs.lookup(p('/project/lib/missing.js'));
+        expect(multiLookup).not.toHaveBeenCalled();
+
+        // Outside all roots — fallback fires
+        multiRootTfs.lookup(p('/project/vendor/missing.js'));
+        expect(multiLookup).toHaveBeenCalled();
+      });
+    });
+  });
 });
