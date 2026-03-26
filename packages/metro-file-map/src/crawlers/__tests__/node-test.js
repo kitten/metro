@@ -38,7 +38,7 @@ jest.mock('child_process', () => ({
   }),
 }));
 
-jest.mock('graceful-fs', () => {
+jest.mock('fs', () => {
   const slash = require('slash');
   let mtime = 32;
   const size = 42;
@@ -372,7 +372,7 @@ describe('node crawler', () => {
 
   test('uses the withFileTypes option with readdir', async () => {
     nodeCrawl = require('../node').default;
-    const fs = require('graceful-fs');
+    const fs = require('fs');
 
     const {changedFiles, removedFiles} = await nodeCrawl({
       console: global.console,
@@ -424,7 +424,7 @@ describe('node crawler', () => {
     expect(removedFiles).toEqual(new Set());
 
     // lstat should not have been called
-    const fs = require('graceful-fs');
+    const fs = require('fs');
     expect(fs.lstat).not.toHaveBeenCalled();
   });
 
