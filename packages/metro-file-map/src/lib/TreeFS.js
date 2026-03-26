@@ -22,6 +22,7 @@ import type {
 
 import H from '../constants';
 import {RootPathUtils} from './RootPathUtils';
+import * as fs from 'fs';
 import invariant from 'invariant';
 import path from 'path';
 
@@ -202,9 +203,27 @@ export default class TreeFS implements MutableFileSystem {
           // Types differ, file has changed
           continue;
         }
+
+        // Lazy-stat: when the crawler didn't provide mtime (skipStat mode),
+        // stat the file on-demand to populate mtime and size for comparison.
+        if (newMetadata[H.MTIME] == null) {
+          try {
+            const stat = fs.lstatSync(
+              this.#pathUtils.normalToAbsolute(canonicalPath),
+            );
+            newMetadata[H.MTIME] = stat.mtime.getTime();
+            newMetadata[H.SIZE] = stat.size;
+          } catch {
+            // File disappeared between crawl and diff — treat as removed
+            files.delete(canonicalPath);
+            changedFiles.delete(canonicalPath);
+            removedFiles.add(canonicalPath);
+            continue;
+          }
+        }
+
         if (
           newMetadata[H.MTIME] != null &&
-          // TODO: Remove when mtime is null if not populated
           newMetadata[H.MTIME] != 0 &&
           newMetadata[H.MTIME] === metadata[H.MTIME]
         ) {
