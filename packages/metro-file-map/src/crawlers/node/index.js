@@ -188,7 +188,7 @@ function findWithoutStat(
   let activeCalls = 0;
   const pathUtils = new RootPathUtils(rootDir);
 
-  function search(directory: string): void {
+  function search(directory: string, dirNormal: string): void {
     activeCalls++;
     fs.readdir(directory, {withFileTypes: true}, (err, entries) => {
       activeCalls--;
@@ -198,7 +198,8 @@ function findWithoutStat(
         );
       } else {
         entries.forEach((entry: fs.Dirent) => {
-          const file = path.join(directory, entry.name.toString());
+          const name = entry.name.toString();
+          const file = directory + path.sep + name;
 
           if (ignore(file)) {
             return;
@@ -208,15 +209,20 @@ function findWithoutStat(
             return;
           }
 
+          // Build the normal path incrementally — avoids calling
+          // absoluteToNormal per file.
+          const fileNormal =
+            dirNormal === '' ? name : dirNormal + path.sep + name;
+
           if (entry.isDirectory()) {
-            search(file);
+            search(file, fileNormal);
             return;
           }
 
           const isSymlink = entry.isSymbolicLink();
-          const ext = path.extname(file).substr(1);
+          const ext = path.extname(name).substr(1);
           if (isSymlink || extensions.includes(ext)) {
-            result.set(pathUtils.absoluteToNormal(file), [
+            result.set(fileNormal, [
               null, // H.MTIME — deferred to getDifference
               0, // H.SIZE — unknown
               0, // H.VISITED
@@ -235,7 +241,7 @@ function findWithoutStat(
   }
 
   if (roots.length > 0) {
-    roots.forEach(search);
+    roots.forEach(root => search(root, pathUtils.absoluteToNormal(root)));
   } else {
     callback(result);
   }
