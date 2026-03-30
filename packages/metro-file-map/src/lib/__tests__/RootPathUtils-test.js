@@ -9,7 +9,10 @@
  * @oncall react_native
  */
 
-import type {RootPathUtils as RootPathUtilsT} from '../RootPathUtils';
+import type {
+  RootPathUtils as RootPathUtilsT,
+  pathsToPattern as pathsToPatternT,
+} from '../RootPathUtils';
 
 let mockPathModule;
 jest.mock('path', () => mockPathModule);
@@ -152,5 +155,104 @@ describe.each([['win32'], ['posix']])('RootPathUtils on %s', platform => {
     [p('../../../..foo'), null],
   ])('getAncestorOfRootIdx (%s => %s)', (input, expected) => {
     expect(pathUtils.getAncestorOfRootIdx(input)).toEqual(expected);
+  });
+});
+
+describe.each([['win32'], ['posix']])('pathsToPattern on %s', platform => {
+  let pathsToPattern: typeof pathsToPatternT;
+  let RootPathUtils: Class<RootPathUtilsT>;
+
+  // Convenience function to write paths with posix separators but convert them
+  // to system separators (with drive letter on win32)
+  const p: string => string = filePath =>
+    platform === 'win32'
+      ? filePath.replace(/\//g, '\\').replace(/^\\/, 'C:\\')
+      : filePath;
+
+  const rootDir = p('/project/root');
+
+  beforeEach(() => {
+    jest.resetModules();
+    mockPathModule = jest.requireActual<{}>('path')[platform];
+    ({RootPathUtils, pathsToPattern} = require('../RootPathUtils'));
+  });
+
+  test('empty array returns a pattern that never matches', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([], pu);
+    expect(pattern.test('')).toBe(false);
+    expect(pattern.test('anything')).toBe(false);
+    expect(pattern.test('packages')).toBe(false);
+  });
+
+  test('single path matches children', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/packages/foo')], pu);
+    // Resulting normal paths are root-relative: packages/foo
+    expect(pattern.test(p('packages/foo/bar'))).toBe(true);
+    expect(pattern.test(p('packages/foo/bar/baz'))).toBe(true);
+  });
+
+  test('single path does not match the path itself (no trailing sep)', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/packages/foo')], pu);
+    expect(pattern.test(p('packages/foo'))).toBe(false);
+  });
+
+  test('single path does not match siblings or unrelated paths', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/packages/foo')], pu);
+    expect(pattern.test(p('packages/foobar/baz'))).toBe(false);
+    expect(pattern.test(p('packages/bar/baz'))).toBe(false);
+    expect(pattern.test(p('other/path'))).toBe(false);
+  });
+
+  test('single path does not match ancestors', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/packages/foo')], pu);
+    expect(pattern.test(p('packages/'))).toBe(false);
+    expect(pattern.test('')).toBe(false);
+  });
+
+  test('multiple paths match children of any root', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern(
+      [p('/project/root/packages/foo'), p('/project/root/packages/bar')],
+      pu,
+    );
+    expect(pattern.test(p('packages/foo/file.js'))).toBe(true);
+    expect(pattern.test(p('packages/bar/file.js'))).toBe(true);
+    expect(pattern.test(p('packages/baz/file.js'))).toBe(false);
+  });
+
+  test('paths with regex-special characters are escaped', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/packages/foo.bar')], pu);
+    expect(pattern.test(p('packages/foo.bar/baz'))).toBe(true);
+    // The dot should be literal, not match any character
+    expect(pattern.test(p('packages/fooXbar/baz'))).toBe(false);
+  });
+
+  test('path at root level (single segment)', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root/src')], pu);
+    expect(pattern.test(p('src/index.js'))).toBe(true);
+    expect(pattern.test(p('src/nested/file.js'))).toBe(true);
+    expect(pattern.test(p('srcOther/file.js'))).toBe(false);
+  });
+
+  test('path equal to rootDir matches all non-escaped paths', () => {
+    const pu = new RootPathUtils(rootDir);
+    const pattern = pathsToPattern([p('/project/root')], pu);
+    expect(pattern).not.toBeNull();
+    // Paths inside rootDir match
+    expect(pattern.test(p('src/index.js'))).toBe(true);
+    expect(pattern.test(p('node_modules/foo/bar.js'))).toBe(true);
+    expect(pattern.test(p('packages/foo/bar'))).toBe(true);
+    // Paths escaping rootDir via '..' do not match
+    expect(pattern.test(p('../sibling/foo'))).toBe(false);
+    expect(pattern.test('..')).toBe(false);
+    // A segment that merely starts with '..' is still inside rootDir
+    expect(pattern.test(p('..foo/bar'))).toBe(true);
   });
 });

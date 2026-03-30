@@ -22,7 +22,7 @@ import type {
 } from '../flow-types';
 
 import H from '../constants';
-import {RootPathUtils} from './RootPathUtils';
+import {RootPathUtils, pathsToPattern} from './RootPathUtils';
 import invariant from 'invariant';
 import path from 'path';
 
@@ -135,8 +135,8 @@ export default class TreeFS implements MutableFileSystem {
   +#pathUtils: RootPathUtils;
   +#processFile: ProcessFileFunction;
   +#rootDir: Path;
+  +#rootPattern: RegExp;
   #rootNode: DirectoryNode = new Map();
-  +#roots: ReadonlyArray<string>;
 
   constructor(opts: TreeFSOptions) {
     const {rootDir, files, processFile, fallbackFilesystem, roots} = opts;
@@ -144,9 +144,7 @@ export default class TreeFS implements MutableFileSystem {
     this.#pathUtils = new RootPathUtils(rootDir);
     this.#processFile = processFile;
     this.#fallbackFilesystem = fallbackFilesystem ?? null;
-    this.#roots = (roots ?? []).map(root =>
-      this.#pathUtils.absoluteToNormal(root),
-    );
+    this.#rootPattern = pathsToPattern(roots ?? [], this.#pathUtils);
     if (files != null) {
       this.bulkAddOrModify(files);
     }
@@ -1326,27 +1324,6 @@ export default class TreeFS implements MutableFileSystem {
   }
 
   /**
-   * Check whether a given normal (root-relative) path falls inside any of the
-   * crawl roots. The fallback filesystem should not be consulted for paths
-   * inside roots, because those are already covered by the initial crawl and
-   * the watcher.
-   */
-  #isInsideRoots(normalPath: string): boolean {
-    for (const root of this.#roots) {
-      if (
-        normalPath === root ||
-        normalPath.startsWith(root + path.sep) ||
-        // normalPath is an ancestor of a root (e.g. looking up '' when root
-        // is 'packages/foo') — the crawl already covers this subtree.
-        root.startsWith(normalPath + path.sep)
-      ) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /**
    * Synchronously populate a missing tree node by querying the injected
    * fallback filesystem. The fallback returns tree-compatible nodes
    * (FileMetadata tuples or directory Maps) that are inserted directly.
@@ -1366,7 +1343,7 @@ export default class TreeFS implements MutableFileSystem {
       parentCanonicalPath === ''
         ? segmentName
         : parentCanonicalPath + path.sep + segmentName;
-    if (this.#isInsideRoots(childCanonicalPath)) {
+    if (this.#rootPattern.test(childCanonicalPath)) {
       return null;
     }
     const parentAbsolute =
@@ -1403,7 +1380,7 @@ export default class TreeFS implements MutableFileSystem {
     if (fallback == null) {
       return;
     }
-    if (this.#isInsideRoots(canonicalPath)) {
+    if (this.#rootPattern.test(canonicalPath)) {
       return;
     }
     const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);

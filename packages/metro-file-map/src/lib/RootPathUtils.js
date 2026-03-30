@@ -314,3 +314,32 @@ export class RootPathUtils {
     }
   }
 }
+
+export function pathsToPattern(
+  paths: ReadonlyArray<string>,
+  pathUtils: RootPathUtils,
+): RegExp {
+  if (paths.length === 0) {
+    // Return a pattern that never matches.
+    return /(?!)/;
+  }
+  const pathsPatterns = paths.map((input) => {
+    let pattern = pathUtils.absoluteToNormal(input);
+    // When pattern is '' (root === rootDir), match any normal path that
+    // doesn't escape the root via '..' indirections.
+    if (pattern === '') {
+      return `(?!\\.\\.(?:\\${path.sep}|$))`;
+    }
+    // Append separator so that 'src' matches 'src/foo' but not 'src2'.
+    if (!pattern.endsWith(path.sep)) {
+      pattern += path.sep;
+    }
+    // Escape all regex-special characters. The string inputs are supposed to
+    // match literally.
+    return pattern.replace(
+      /[\-\[\]\{\}\(\)\*\+\?\.\\\^\$\|\/]/g,
+      '\\$&',
+    );
+  });
+  return new RegExp(`^(?:${pathsPatterns.join('|')})`);
+}
