@@ -1171,7 +1171,7 @@ export default class TreeFS implements MutableFileSystem {
       const rootCanonical =
         pathPrefix === ''
           ? canonicalRoot
-          : path.join(canonicalRoot, pathPrefix);
+          : canonicalRoot + path.sep + pathPrefix;
       this.#populateDirFromFilesystem(iterationRootNode, rootCanonical);
     }
 
@@ -1348,7 +1348,7 @@ export default class TreeFS implements MutableFileSystem {
     }
     const parentAbsolute =
       this.#pathUtils.normalToAbsolute(parentCanonicalPath);
-    const absolutePath = path.join(parentAbsolute, segmentName);
+    const absolutePath = parentAbsolute + path.sep + segmentName;
 
     const node: ?MixedNode = fallback.lookup(absolutePath);
     if (node == null) {
