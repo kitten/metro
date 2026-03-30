@@ -1238,10 +1238,10 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
 
   describe('filesystem fallback (fallbackFilesystem)', () => {
     let fallbackTfs: TreeFSType;
-    let mockLookup: JestMockFn<[string], 'd' | FileMetadata | null>;
+    let mockLookup: JestMockFn<[string], FileMetadata | Map<string, mixed> | null>;
     let mockReaddir: JestMockFn<
       [string],
-      ?Map<string, FileMetadata | 'd'>,
+      ?Map<string, FileMetadata | Map<string, mixed>>,
     >;
 
     beforeEach(() => {
@@ -1299,10 +1299,10 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       mockLookup.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
         if (normalized.endsWith('/lib')) {
-          return 'd';
-        }
-        if (normalized.endsWith('/utils.js')) {
-          return [0, 0, 0, null, 0, null];
+          // lookup returns a populated Map for directories
+          const children: Map<string, mixed> = new Map();
+          children.set('utils.js', [0, 0, 0, null, 0, null]);
+          return children;
         }
         return null;
       });
@@ -1312,10 +1312,8 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       if (result.exists) {
         expect(result.type).toBe('f');
       }
-      // lookup is called per segment — once for 'lib' (dir) and once for 'utils.js' (file)
-      expect(mockLookup).toHaveBeenCalledTimes(2);
-      // readdir is NOT called during traversal
-      expect(mockReaddir).not.toHaveBeenCalled();
+      // lookup is called once for 'lib' — utils.js is found in the returned Map
+      expect(mockLookup).toHaveBeenCalledTimes(1);
     });
 
     test('negative lookup returns {exists: false} after checking filesystem', () => {
@@ -1328,10 +1326,9 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       mockLookup.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
         if (normalized.endsWith('/newdir')) {
-          return 'd';
-        }
-        if (normalized.endsWith('/exists.js')) {
-          return [0, 0, 0, null, 0, null];
+          const children: Map<string, mixed> = new Map();
+          children.set('exists.js', [0, 0, 0, null, 0, null]);
+          return children;
         }
         return null;
       });
@@ -1340,47 +1337,42 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       fallbackTfs.lookup(p('/project/newdir/exists.js'));
       mockLookup.mockReset();
 
-      // File not in directory — lookup called for 'missing.js' but newdir
-      // already exists in tree, so only one lookup for the missing file
+      // missing.js is not in the populated directory — lookup is called for
+      // the file itself, but newdir is already in the tree.
       const result = fallbackTfs.lookup(p('/project/newdir/missing.js'));
       expect(result.exists).toBe(false);
+      expect(mockLookup).toHaveBeenCalledTimes(1);
+      expect(mockLookup).toHaveBeenCalledWith(
+        p('/project/newdir/missing.js'),
+      );
     });
 
-    test('matchFiles uses readdir to populate sentinel directories', () => {
-      // First, create an empty sentinel via lookup
+    test('matchFiles sees files eagerly populated via lookup', () => {
       mockLookup.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
         if (normalized.endsWith('/lib')) {
-          return 'd';
-        }
-        if (normalized.endsWith('/helper.js')) {
-          return [0, 0, 0, null, 0, null];
+          const children: Map<string, mixed> = new Map();
+          children.set('helper.js', [0, 0, 0, null, 0, null]);
+          children.set('extra.js', [0, 0, 0, null, 0, null]);
+          return children;
         }
         return null;
       });
 
-      // Trigger the fallback to create lib as empty sentinel
+      // Trigger the fallback — lib is discovered and eagerly populated
       fallbackTfs.lookup(p('/project/src/lib/helper.js'));
+      mockLookup.mockReset();
 
-      // Set up readdir for the iteration phase
-      mockReaddir.mockImplementation((absPath: string) => {
-        const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/lib')) {
-          const entries: Map<string, FileMetadata | 'd'> = new Map();
-          entries.set('helper.js', [0, 0, 0, null, 0, null]);
-          entries.set('extra.js', [0, 0, 0, null, 0, null]);
-          return entries;
-        }
-        return null;
-      });
-
-      // matchFiles should use readdir to populate the directory
+      // matchFiles should see both files without additional fallback calls
       const files = [
         ...fallbackTfs.matchFiles({
           rootDir: p('/project/src/lib'),
         }),
       ];
       expect(files).toContain(p('/project/src/lib/helper.js'));
+      expect(files).toContain(p('/project/src/lib/extra.js'));
+      expect(mockLookup).not.toHaveBeenCalled();
+      expect(mockReaddir).not.toHaveBeenCalled();
     });
 
     test('does not fall back when fallbackFilesystem is not provided', () => {
@@ -1417,10 +1409,10 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
 
     describe('root scoping', () => {
       let scopedTfs: TreeFSType;
-      let scopedLookup: JestMockFn<[string], 'd' | FileMetadata | null>;
+      let scopedLookup: JestMockFn<[string], FileMetadata | Map<string, mixed> | null>;
       let scopedReaddir: JestMockFn<
         [string],
-        ?Map<string, FileMetadata | 'd'>,
+        ?Map<string, FileMetadata | Map<string, mixed>>,
       >;
 
       beforeEach(() => {
@@ -1452,13 +1444,11 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         scopedLookup.mockImplementation((absPath: string) => {
           const normalized = absPath.replace(/\\/g, '/');
           if (normalized.endsWith('/node_modules')) {
-            return 'd';
-          }
-          if (normalized.endsWith('/foo')) {
-            return 'd';
-          }
-          if (normalized.endsWith('/index.js')) {
-            return [0, 0, 0, null, 0, null];
+            const children: Map<string, mixed> = new Map();
+            children.set('foo', new Map([
+              ['index.js', [0, 0, 0, null, 0, null]],
+            ]));
+            return children;
           }
           return null;
         });
@@ -1479,11 +1469,11 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       test('handles multiple roots correctly', () => {
         const multiLookup: JestMockFn<
           [string],
-          'd' | FileMetadata | null,
+          FileMetadata | Map<string, mixed> | null,
         > = jest.fn(() => null);
         const multiReaddir: JestMockFn<
           [string],
-          ?Map<string, FileMetadata | 'd'>,
+          ?Map<string, FileMetadata | Map<string, mixed>>,
         > = jest.fn(() => null);
         const multiRootTfs = new TreeFS({
           rootDir: p('/project'),

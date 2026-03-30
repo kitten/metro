@@ -485,25 +485,24 @@ export interface MutableFileSystem extends FileSystem {
 
 export type Path = string;
 
+type DirectoryNode = Map<string, MixedNode>;
+type MixedNode = FileMetadata | DirectoryNode;
+
 /**
  * A synchronous filesystem adapter for TreeFS's lazy population. Provides
  * two operations:
  *
  * - `lookup`: Check a single path via lstat. Used by #lookupByNormalPath
- *   during traversal. Returns 'd' for directories, FileMetadata for
- *   files/symlinks, or null if missing.
+ *   during traversal. Returns a populated Map (DirectoryNode) for
+ *   directories, FileMetadata for files/symlinks, or null if missing.
  *
  * - `readdir`: List all children of a directory. Used by #pathIterator for
  *   enumeration (matchFiles / require.context). Returns a Map of child
  *   entries, or null if the directory can't be read.
  */
 export type FallbackFilesystem = {
-  +lookup: (
-    absolutePath: string,
-  ) => 'd' | FileMetadata | null,
-  +readdir: (
-    absolutePath: string,
-  ) => ?Map<string, FileMetadata | 'd'>,
+  +lookup: (absolutePath: string) => MixedNode | null,
+  +readdir: (absolutePath: string) => DirectoryNode | null,
 };
 
 export type ProcessFileFunction = (

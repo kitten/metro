@@ -18,6 +18,10 @@ import type {
 import * as fs from 'graceful-fs';
 import * as path from 'path';
 
+type DirectoryNode = Map<string, MixedNode>;
+type FileNode = FileMetadata;
+type MixedNode = FileNode | DirectoryNode;
+
 type FallbackFilesystemOptions = {
   extensions: ReadonlyArray<string>,
   ignore: IgnoreMatcher,
@@ -38,8 +42,53 @@ export default function createFallbackFilesystem(
 ): FallbackFilesystem {
   const {extensions, ignore, includeSymlinks} = opts;
 
+  function readdir(
+    absolutePath: string,
+  ): DirectoryNode | null {
+    let dirEntries;
+    try {
+      dirEntries = fs.readdirSync(absolutePath, {withFileTypes: true});
+    } catch {
+      return null;
+    }
+    const result: Map<string, MixedNode> = new Map();
+    for (const entry of dirEntries) {
+      const name = entry.name.toString();
+      const childPath = path.join(absolutePath, name);
+
+      if (ignore(childPath)) {
+        continue;
+      }
+
+      if (entry.isDirectory()) {
+        result.set(name, new Map());
+      } else if (entry.isSymbolicLink()) {
+        if (!includeSymlinks) {
+          continue;
+        }
+        try {
+          const target = fs.readlinkSync(childPath);
+          result.set(name, [0, 0, 0, null, target, null]);
+        } catch {
+          // Can't read symlink target — skip
+        }
+      } else if (entry.isFile()) {
+        const ext = path.extname(name).slice(1);
+        if (!extensions.includes(ext)) {
+          continue;
+        }
+        result.set(name, [0, 0, 0, null, 0, null]);
+      }
+    }
+    return result;
+  }
+
   return {
-    lookup(absolutePath: string): 'd' | FileMetadata | null {
+    readdir,
+
+    lookup(
+      absolutePath: string,
+    ): MixedNode | null {
       if (ignore(absolutePath)) {
         return null;
       }
@@ -52,7 +101,7 @@ export default function createFallbackFilesystem(
       }
 
       if (stat.isDirectory()) {
-        return 'd';
+        return readdir(absolutePath);
       }
 
       if (stat.isSymbolicLink()) {
@@ -77,45 +126,6 @@ export default function createFallbackFilesystem(
       }
 
       return null;
-    },
-
-    readdir(absolutePath: string): ?Map<string, FileMetadata | 'd'> {
-      let dirEntries;
-      try {
-        dirEntries = fs.readdirSync(absolutePath, {withFileTypes: true});
-      } catch {
-        return null;
-      }
-      const result: Map<string, FileMetadata | 'd'> = new Map();
-      for (const entry of dirEntries) {
-        const name = entry.name.toString();
-        const childPath = path.join(absolutePath, name);
-
-        if (ignore(childPath)) {
-          continue;
-        }
-
-        if (entry.isDirectory()) {
-          result.set(name, 'd');
-        } else if (entry.isSymbolicLink()) {
-          if (!includeSymlinks) {
-            continue;
-          }
-          try {
-            const target = fs.readlinkSync(childPath);
-            result.set(name, [0, 0, 0, null, target, null]);
-          } catch {
-            // Can't read symlink target — skip
-          }
-        } else if (entry.isFile()) {
-          const ext = path.extname(name).slice(1);
-          if (!extensions.includes(ext)) {
-            continue;
-          }
-          result.set(name, [0, 0, 0, null, 0, null]);
-        }
-      }
-      return result;
     },
   };
 }

@@ -52,14 +52,23 @@ describe('createFallbackFilesystem', () => {
       expect(fallback.lookup('/project/nonexistent')).toBeNull();
     });
 
-    test('returns "d" for directories', () => {
+    test('returns a populated Map for directories', () => {
       fs.lstatSync.mockReturnValue(({
         isDirectory: () => true,
         isSymbolicLink: () => false,
         isFile: () => false,
       }: $FlowFixMe));
+      fs.readdirSync.mockReturnValue(([
+        {name: 'foo', isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false},
+        {name: 'bar.js', isDirectory: () => false, isSymbolicLink: () => false, isFile: () => true},
+      ]: $FlowFixMe));
       const fallback = createFallbackFilesystem(defaultOpts);
-      expect(fallback.lookup('/project/node_modules')).toBe('d');
+      const result = fallback.lookup('/project/node_modules');
+      expect(result).toBeInstanceOf(Map);
+      if (result instanceof Map) {
+        expect(result.get('foo')).toBeInstanceOf(Map);
+        expect(result.get('bar.js')).toEqual([0, 0, 0, null, 0, null]);
+      }
     });
 
     test('returns FileMetadata for files with matching extension', () => {
@@ -71,7 +80,7 @@ describe('createFallbackFilesystem', () => {
         size: 42,
       }: $FlowFixMe));
       const fallback = createFallbackFilesystem(defaultOpts);
-      const result: FileMetadata | 'd' | null =
+      const result: FileMetadata | Map<string, mixed> | null =
         fallback.lookup('/project/foo.js');
       expect(result).toEqual([1000, 42, 0, null, 0, null]);
     });
@@ -98,7 +107,7 @@ describe('createFallbackFilesystem', () => {
       }: $FlowFixMe));
       fs.readlinkSync.mockReturnValue('./target.js');
       const fallback = createFallbackFilesystem(defaultOpts);
-      const result: FileMetadata | 'd' | null =
+      const result: FileMetadata | Map<string, mixed> | null =
         fallback.lookup('/project/link.js');
       expect(result).toEqual([1000, 10, 0, null, './target.js', null]);
     });
@@ -191,7 +200,7 @@ describe('createFallbackFilesystem', () => {
       }
     });
 
-    test('includes directories as "d"', () => {
+    test('includes directories as empty Maps', () => {
       fs.readdirSync.mockReturnValue(([
         {name: 'subdir', isDirectory: () => true, isSymbolicLink: () => false, isFile: () => false},
       ]: $FlowFixMe));
@@ -199,7 +208,8 @@ describe('createFallbackFilesystem', () => {
       const result = fallback.readdir('/project/src');
       expect(result).not.toBeNull();
       if (result != null) {
-        expect(result.get('subdir')).toBe('d');
+        expect(result.get('subdir')).toBeInstanceOf(Map);
+        expect(result.get('subdir')?.size).toBe(0);
       }
     });
   });

@@ -1350,18 +1350,9 @@ export default class TreeFS implements MutableFileSystem {
       this.#pathUtils.normalToAbsolute(parentCanonicalPath);
     const absolutePath = path.join(parentAbsolute, segmentName);
 
-    const result = fallback.lookup(absolutePath);
-    if (result == null) {
+    const node: ?MixedNode = fallback.lookup(absolutePath);
+    if (node == null) {
       return null;
-    }
-    let node: MixedNode;
-    if (result === 'd') {
-      // Insert an empty directory sentinel — children are populated lazily
-      // on access via subsequent #populateFromFilesystem calls or via
-      // #populateDirFromFilesystem during iteration.
-      node = new Map();
-    } else {
-      node = result;
     }
     parentNode.set(segmentName, node);
     return node;
@@ -1390,7 +1381,7 @@ export default class TreeFS implements MutableFileSystem {
     }
     for (const [name, entry] of entries) {
       if (!dirNode.has(name)) {
-        dirNode.set(name, entry === 'd' ? new Map() : entry);
+        dirNode.set(name, entry);
       }
     }
   }
