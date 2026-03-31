@@ -1206,7 +1206,7 @@ export default class TreeFS implements MutableFileSystem {
         pathPrefix === ''
           ? canonicalRoot
           : canonicalRoot + path.sep + pathPrefix;
-      this.#populateDirFromFilesystem(iterationRootNode, rootCanonical);
+      this.#populateDirFromFilesystem(iterationRootNode, rootCanonical, false);
     }
 
     for (const [name, node] of this.#directoryNodeIterator(
@@ -1283,7 +1283,7 @@ export default class TreeFS implements MutableFileSystem {
             opts.canonicalPathOfRoot,
             nodePathWithSystemSeparators,
           );
-          this.#populateDirFromFilesystem(node, canonicalPath);
+          this.#populateDirFromFilesystem(node, canonicalPath, false);
         }
         yield* this.#pathIterator(
           node,
@@ -1394,13 +1394,16 @@ export default class TreeFS implements MutableFileSystem {
       parentCanonicalPath === ''
         ? segmentName
         : parentCanonicalPath + path.sep + segmentName;
-    if (this.#rootPattern?.test(childCanonicalPath) || this.#isOutsideFallbackBoundary(childCanonicalPath)) {
+    if (
+      this.#rootPattern?.test(childCanonicalPath) ||
+      this.#isOutsideFallbackBoundary(childCanonicalPath)
+    ) {
       return null;
     } else if (
       parentCanonicalPath !== '' &&
       shouldFallbackCrawlDir(parentCanonicalPath)
     ) {
-      this.#populateDirFromFilesystem(parentNode, parentCanonicalPath);
+      this.#populateDirFromFilesystem(parentNode, parentCanonicalPath, true);
       return parentNode.get(segmentName) ?? null;
     } else if (parentNode.has(segmentName)) {
       return parentNode.get(segmentName) ?? null;
@@ -1424,12 +1427,15 @@ export default class TreeFS implements MutableFileSystem {
   #populateDirFromFilesystem(
     dirNode: DirectoryNode,
     canonicalPath: string,
+    skipCheck: boolean,
   ): void {
     const fallback = this.#fallbackFilesystem;
     if (
       fallback == null ||
-      this.#rootPattern?.test(canonicalPath) ||
-      this.#isOutsideFallbackBoundary(canonicalPath)
+      !skipCheck && (
+        this.#rootPattern?.test(canonicalPath) ||
+        this.#isOutsideFallbackBoundary(canonicalPath)
+      )
     ) {
       return;
     }
