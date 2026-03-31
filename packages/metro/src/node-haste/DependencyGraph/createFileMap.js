@@ -135,6 +135,7 @@ export default function createFileMap(
     resetCache: config.resetCache,
     rootDir: config.projectRoot,
     roots: config.watchFolders,
+    serverRoot: config.server.unstable_serverRoot,
     useWatchman: config.resolver.useWatchman,
     watch,
     watchmanDeferStates: config.watcher.watchman.deferStates,

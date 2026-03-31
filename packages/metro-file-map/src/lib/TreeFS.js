@@ -50,6 +50,7 @@ type DeserializedSnapshotInput = {
   processFile: ProcessFileFunction,
   fallbackFilesystem?: ?FallbackFilesystem,
   roots?: ReadonlyArray<string>,
+  serverRoot?: ?string,
 };
 
 type TreeFSOptions = {
@@ -58,6 +59,7 @@ type TreeFSOptions = {
   processFile: ProcessFileFunction,
   fallbackFilesystem?: ?FallbackFilesystem,
   roots?: ReadonlyArray<string>,
+  serverRoot?: ?string,
 };
 
 type MatchFilesOptions = Readonly<{
@@ -131,6 +133,7 @@ type MetadataIteratorOptions = Readonly<{
 export default class TreeFS implements MutableFileSystem {
   +#cachedNormalSymlinkTargets: WeakMap<FileNode, NormalizedSymlinkTarget> =
     new WeakMap();
+  +#fallbackBoundary: ?string;
   +#fallbackFilesystem: ?FallbackFilesystem;
   +#pathUtils: RootPathUtils;
   +#processFile: ProcessFileFunction;
@@ -139,11 +142,21 @@ export default class TreeFS implements MutableFileSystem {
   #rootNode: DirectoryNode = new Map();
 
   constructor(opts: TreeFSOptions) {
-    const {rootDir, files, processFile, fallbackFilesystem, roots} = opts;
+    const {rootDir, files, processFile, fallbackFilesystem, roots, serverRoot} =
+      opts;
     this.#rootDir = rootDir;
     this.#pathUtils = new RootPathUtils(rootDir);
     this.#processFile = processFile;
     this.#fallbackFilesystem = fallbackFilesystem ?? null;
+    if (serverRoot != null) {
+      const boundaryNormal = this.#pathUtils.absoluteToNormal(serverRoot);
+      this.#fallbackBoundary =
+        boundaryNormal !== ''
+          ? boundaryNormal + path.sep + '..' + path.sep
+          : '..' + path.sep;
+    } else {
+      this.#fallbackBoundary = null;
+    }
     this.#rootPattern = pathsToPattern(roots ?? [], this.#pathUtils);
     if (files != null) {
       this.bulkAddOrModify(files);
@@ -155,9 +168,21 @@ export default class TreeFS implements MutableFileSystem {
   }
 
   static fromDeserializedSnapshot(args: DeserializedSnapshotInput): TreeFS {
-    const {rootDir, fileSystemData, processFile, fallbackFilesystem, roots} =
-      args;
-    const tfs = new TreeFS({processFile, rootDir, fallbackFilesystem, roots});
+    const {
+      rootDir,
+      fileSystemData,
+      processFile,
+      fallbackFilesystem,
+      roots,
+      serverRoot,
+    } = args;
+    const tfs = new TreeFS({
+      processFile,
+      rootDir,
+      fallbackFilesystem,
+      roots,
+      serverRoot,
+    });
     tfs.#rootNode = fileSystemData;
     return tfs;
   }
@@ -1333,6 +1358,13 @@ export default class TreeFS implements MutableFileSystem {
     return clone;
   }
 
+  #isOutsideFallbackBoundary(canonicalPath: string): boolean {
+    return (
+      this.#fallbackBoundary != null &&
+      canonicalPath.startsWith(this.#fallbackBoundary)
+    );
+  }
+
   // Whether a directory at the given canonical path should be eagerly
   // populated via readdir. Returns false for directories that are typically
   // too large (node_modules) or not useful (.git, .hg, etc.) to enumerate.
@@ -1367,7 +1399,7 @@ export default class TreeFS implements MutableFileSystem {
       parentCanonicalPath === ''
         ? segmentName
         : parentCanonicalPath + path.sep + segmentName;
-    if (this.#rootPattern?.test(childCanonicalPath)) {
+    if (this.#rootPattern?.test(childCanonicalPath) || this.#isOutsideFallbackBoundary(childCanonicalPath)) {
       return null;
     } else if (
       parentCanonicalPath !== '' &&
@@ -1399,7 +1431,11 @@ export default class TreeFS implements MutableFileSystem {
     canonicalPath: string,
   ): void {
     const fallback = this.#fallbackFilesystem;
-    if (fallback == null || this.#rootPattern?.test(canonicalPath)) {
+    if (
+      fallback == null ||
+      this.#rootPattern?.test(canonicalPath) ||
+      this.#isOutsideFallbackBoundary(canonicalPath)
+    ) {
       return;
     }
     const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);

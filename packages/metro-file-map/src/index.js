@@ -87,6 +87,7 @@ export type InputOptions = Readonly<{
   retainAllFiles: boolean,
   rootDir: string,
   roots: ReadonlyArray<string>,
+  serverRoot?: ?string,
 
   cacheManagerFactory?: ?CacheManagerFactory,
   console?: Console,
@@ -110,6 +111,7 @@ type HealthCheckOptions = Readonly<{
 type InternalOptions = Readonly<{
   ...BuildParameters,
   enableFallback: boolean,
+  serverRoot: ?string,
   healthCheck: HealthCheckOptions,
   perfLoggerFactory: ?PerfLoggerFactory,
   resetCache: ?boolean,
@@ -333,6 +335,7 @@ export default class FileMap extends EventEmitter {
     this.#options = {
       ...buildParameters,
       enableFallback: options.enableFallback === true,
+      serverRoot: options.serverRoot ?? null,
       healthCheck: options.healthCheck,
       perfLoggerFactory: options.perfLoggerFactory,
       resetCache: options.resetCache,
@@ -420,8 +423,9 @@ export default class FileMap extends EventEmitter {
                 rootDir,
                 fallbackFilesystem,
                 roots,
+                serverRoot: this.#options.serverRoot,
               })
-            : new TreeFS({processFile, rootDir, fallbackFilesystem, roots});
+            : new TreeFS({processFile, rootDir, fallbackFilesystem, roots, serverRoot: this.#options.serverRoot});
         this.#startupPerfLogger?.point('constructFileSystem_end');
 
         const plugins = this.#plugins;
