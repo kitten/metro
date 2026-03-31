@@ -177,12 +177,10 @@ describe.each([['win32'], ['posix']])('pathsToPattern on %s', platform => {
     ({RootPathUtils, pathsToPattern} = require('../RootPathUtils'));
   });
 
-  test('empty array returns a pattern that never matches', () => {
+  test('empty array returns null', () => {
     const pu = new RootPathUtils(rootDir);
     const pattern = pathsToPattern([], pu);
-    expect(pattern.test('')).toBe(false);
-    expect(pattern.test('anything')).toBe(false);
-    expect(pattern.test('packages')).toBe(false);
+    expect(pattern).toBe(null);
   });
 
   test('single path matches children', () => {

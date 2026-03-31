@@ -1238,9 +1238,12 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
 
   describe('filesystem fallback (fallbackFilesystem)', () => {
     let fallbackTfs: TreeFSType;
-    let mockLookup: JestMockFn<[string], FileMetadata | Map<string, mixed> | null>;
+    let mockLookup: JestMockFn<
+      [string, mixed],
+      FileMetadata | Map<string, mixed> | null,
+    >;
     let mockReaddir: JestMockFn<
-      [string],
+      [string, mixed],
       ?Map<string, FileMetadata | Map<string, mixed>>,
     >;
 
@@ -1259,11 +1262,14 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       });
     });
 
-    test('falls back to filesystem for missing file', () => {
-      mockLookup.mockImplementation((absPath: string) => {
+    test('falls back to readdir for a missing file in an eligible parent', () => {
+      mockReaddir.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/missing.js')) {
-          return [200, 42, 0, null, 0, null];
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+            ['missing.js', [200, 42, 0, null, 0, null]],
+          ]);
         }
         return null;
       });
@@ -1273,36 +1279,43 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       if (result.exists) {
         expect(result.type).toBe('f');
       }
-      expect(mockLookup).toHaveBeenCalledWith(
-        p('/project/src/missing.js'),
-      );
+      // readdir was called on the parent directory, not lookup on the file
+      expect(mockReaddir).toHaveBeenCalled();
     });
 
     test('subsequent lookup is pure in-memory (no second fallback call)', () => {
-      mockLookup.mockImplementation((absPath: string) => {
+      mockReaddir.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/missing.js')) {
-          return [200, 42, 0, null, 0, null];
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+            ['missing.js', [200, 42, 0, null, 0, null]],
+          ]);
         }
         return null;
       });
 
       fallbackTfs.lookup(p('/project/src/missing.js'));
-      mockLookup.mockReset();
+      mockReaddir.mockClear();
+      mockLookup.mockClear();
 
       const result = fallbackTfs.lookup(p('/project/src/missing.js'));
       expect(result.exists).toBe(true);
+      // readdir is called again but the production fallback short-circuits
+      // via the marker. Here we just verify no lookup is needed.
       expect(mockLookup).not.toHaveBeenCalled();
     });
 
-    test('falls back for directory traversal using lookup', () => {
-      mockLookup.mockImplementation((absPath: string) => {
+    test('falls back for directory traversal via readdir', () => {
+      mockReaddir.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/lib')) {
-          // lookup returns a populated Map for directories
-          const children: Map<string, mixed> = new Map();
-          children.set('utils.js', [0, 0, 0, null, 0, null]);
-          return children;
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+            ['lib', new Map([
+              ['utils.js', [0, 0, 0, null, 0, null]],
+            ])],
+          ]);
         }
         return null;
       });
@@ -1312,58 +1325,80 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       if (result.exists) {
         expect(result.type).toBe('f');
       }
-      // lookup is called once for 'lib' — utils.js is found in the returned Map
-      expect(mockLookup).toHaveBeenCalledTimes(1);
     });
 
-    test('negative lookup returns {exists: false} after checking filesystem', () => {
+    test('negative lookup returns {exists: false} after checking readdir', () => {
+      mockReaddir.mockImplementation((absPath: string) => {
+        const normalized = absPath.replace(/\\/g, '/');
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+          ]);
+        }
+        return null;
+      });
+
       const result = fallbackTfs.lookup(p('/project/src/nonexistent.js'));
       expect(result.exists).toBe(false);
-      expect(mockLookup).toHaveBeenCalled();
+      expect(mockReaddir).toHaveBeenCalled();
     });
 
-    test('negative lookup in fallback-populated dir does not re-check', () => {
+    test('negative lookup in readdir-populated dir does not use lookup', () => {
+      const newdirMap = new Map<string, mixed>([
+        ['exists.js', [0, 0, 0, null, 0, null]],
+      ]);
+      // lookup returns a directory Map for newdir (rootNode uses lookup)
       mockLookup.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
         if (normalized.endsWith('/newdir')) {
-          const children: Map<string, mixed> = new Map();
-          children.set('exists.js', [0, 0, 0, null, 0, null]);
-          return children;
+          return newdirMap;
         }
         return null;
       });
+      // readdir returns newdir's contents (used for child resolution)
+      mockReaddir.mockImplementation(
+        (absPath: string, dirNode: mixed) => {
+          const normalized = absPath.replace(/\\/g, '/');
+          if (normalized.endsWith('/newdir')) {
+            return newdirMap;
+          }
+          return null;
+        },
+      );
 
-      // Populate the directory via fallback
+      // First lookup discovers newdir via lookup, then readdir populates it
       fallbackTfs.lookup(p('/project/newdir/exists.js'));
-      mockLookup.mockReset();
+      mockReaddir.mockClear();
+      mockLookup.mockClear();
 
-      // missing.js is not in the populated directory — lookup is called for
-      // the file itself, but newdir is already in the tree.
+      // missing.js is not in the populated directory — no individual lookup
+      // needed because readdir already showed the full directory contents.
       const result = fallbackTfs.lookup(p('/project/newdir/missing.js'));
       expect(result.exists).toBe(false);
-      expect(mockLookup).toHaveBeenCalledTimes(1);
-      expect(mockLookup).toHaveBeenCalledWith(
-        p('/project/newdir/missing.js'),
-      );
+      expect(mockLookup).not.toHaveBeenCalled();
     });
 
-    test('matchFiles sees files eagerly populated via lookup', () => {
-      mockLookup.mockImplementation((absPath: string) => {
+    test('matchFiles sees files populated via readdir', () => {
+      mockReaddir.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/lib')) {
-          const children: Map<string, mixed> = new Map();
-          children.set('helper.js', [0, 0, 0, null, 0, null]);
-          children.set('extra.js', [0, 0, 0, null, 0, null]);
-          return children;
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+            ['lib', new Map([
+              ['helper.js', [0, 0, 0, null, 0, null]],
+              ['extra.js', [0, 0, 0, null, 0, null]],
+            ])],
+          ]);
         }
         return null;
       });
 
-      // Trigger the fallback — lib is discovered and eagerly populated
+      // Trigger the fallback — lib is discovered via parent readdir
       fallbackTfs.lookup(p('/project/src/lib/helper.js'));
-      mockLookup.mockReset();
+      mockReaddir.mockClear();
+      mockLookup.mockClear();
 
-      // matchFiles should see both files without additional fallback calls
+      // matchFiles should see both files
       const files = [
         ...fallbackTfs.matchFiles({
           rootDir: p('/project/src/lib'),
@@ -1372,7 +1407,6 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       expect(files).toContain(p('/project/src/lib/helper.js'));
       expect(files).toContain(p('/project/src/lib/extra.js'));
       expect(mockLookup).not.toHaveBeenCalled();
-      expect(mockReaddir).not.toHaveBeenCalled();
     });
 
     test('does not fall back when fallbackFilesystem is not provided', () => {
@@ -1391,11 +1425,14 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       expect(mockLookup).not.toHaveBeenCalled();
     });
 
-    test('handles symlinks discovered via fallback', () => {
-      mockLookup.mockImplementation((absPath: string) => {
+    test('handles symlinks discovered via readdir', () => {
+      mockReaddir.mockImplementation((absPath: string) => {
         const normalized = absPath.replace(/\\/g, '/');
-        if (normalized.endsWith('/link.js')) {
-          return [200, 10, 0, null, p('./index.js'), null];
+        if (normalized.endsWith('/src')) {
+          return new Map<string, mixed>([
+            ['index.js', [100, 10, 0, null, 0, null]],
+            ['link.js', [200, 10, 0, null, p('./index.js'), null]],
+          ]);
         }
         return null;
       });
@@ -1407,11 +1444,233 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       }
     });
 
+    describe('optimistic parent population via readdir', () => {
+      // When roots only contains rootDir, paths starting with '../' escape
+      // the root and use the fallback. #populateFromFilesystem calls
+      // #populateDirFromFilesystem on the parent first, populating all
+      // siblings via a single readdir. The marker protocol in the
+      // production fallback ensures readdir is only done once per dir.
+
+      let parentTfs: TreeFSType;
+      let parentLookup: JestMockFn<
+        [string, mixed],
+        FileMetadata | Map<string, mixed> | null,
+      >;
+      let parentReaddir: JestMockFn<
+        [string, mixed],
+        ?Map<string, FileMetadata | Map<string, mixed>>,
+      >;
+
+      beforeEach(() => {
+        parentLookup = jest.fn(() => null);
+        parentReaddir = jest.fn(() => null);
+        parentTfs = new TreeFS({
+          rootDir: p('/project'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+          fallbackFilesystem: {
+            lookup: parentLookup,
+            readdir: parentReaddir,
+          },
+          // roots only contains rootDir — so rootPattern blocks fallback
+          // inside /project, but allows ../
+          roots: [p('/project')],
+        });
+      });
+
+      test('repeated lookups through ../ reuse the parent directory node', () => {
+        const parentDir = mockPathModule.dirname(p('/project'));
+        parentReaddir.mockImplementation((absPath: string) => {
+          if (absPath === parentDir) {
+            return new Map<string, mixed>([
+              ['lib', new Map([
+                ['a.js', [0, 0, 0, null, 0, null]],
+              ])],
+            ]);
+          }
+          return null;
+        });
+
+        // First lookup through ../
+        const result1 = parentTfs.lookup(p('/project/../lib/a.js'));
+        expect(result1.exists).toBe(true);
+
+        // Reset mocks to track second lookup
+        parentLookup.mockClear();
+        parentReaddir.mockClear();
+
+        // Second lookup through the SAME ../ directory — 'lib' is already
+        // in the tree. readdir may be called again (the production fallback
+        // short-circuits via the marker), but no individual lookup is needed.
+        const result2 = parentTfs.lookup(p('/project/../lib/a.js'));
+        expect(result2.exists).toBe(true);
+        expect(parentLookup).not.toHaveBeenCalled();
+      });
+
+      test('sibling lookups under ../ should use readdir to populate parent', () => {
+        const parentDir = mockPathModule.dirname(p('/project'));
+        // Simulate the marker protocol: on first call, return fresh Map.
+        // On subsequent calls with a dirNode that was previously returned,
+        // return the same dirNode (short-circuit).
+        let populatedMap: ?Map<string, mixed> = null;
+        parentReaddir.mockImplementation(
+          (absPath: string, dirNode: mixed) => {
+            if (absPath === parentDir) {
+              if (dirNode != null && dirNode === populatedMap) {
+                // Already populated — return same reference (marker)
+                return (dirNode: any);
+              }
+              populatedMap = new Map<string, mixed>([
+                ['packages', new Map([
+                  ['a.js', [0, 0, 0, null, 0, null]],
+                ])],
+                ['other', new Map([
+                  ['b.js', [0, 0, 0, null, 0, null]],
+                ])],
+                ['project', new Map()],
+              ]);
+              return populatedMap;
+            }
+            return null;
+          },
+        );
+
+        // First lookup for ../packages/a.js triggers readdir on parent (..)
+        const result1 = parentTfs.lookup(p('/project/../packages/a.js'));
+        expect(result1.exists).toBe(true);
+
+        // Now looking up ../other/b.js — readdir may be called again but
+        // short-circuits via marker. No individual lookup calls needed.
+        parentLookup.mockClear();
+
+        const result2 = parentTfs.lookup(p('/project/../other/b.js'));
+        expect(result2.exists).toBe(true);
+        expect(parentLookup).not.toHaveBeenCalled();
+      });
+
+      test('fallback.lookup is not called per-sibling when readdir covers them', () => {
+        const parentDir = mockPathModule.dirname(p('/project'));
+        let populatedMap: ?Map<string, mixed> = null;
+        parentReaddir.mockImplementation(
+          (absPath: string, dirNode: mixed) => {
+            if (absPath === parentDir) {
+              if (dirNode != null && dirNode === populatedMap) {
+                return (dirNode: any);
+              }
+              populatedMap = new Map<string, mixed>([
+                ['lib', new Map([
+                  ['helper.js', [0, 0, 0, null, 0, null]],
+                ])],
+                ['config', new Map([
+                  ['settings.json', [0, 0, 0, null, 0, null]],
+                ])],
+              ]);
+              return populatedMap;
+            }
+            return null;
+          },
+        );
+
+        // Look up ../lib/helper.js — triggers readdir on parent
+        parentTfs.lookup(p('/project/../lib/helper.js'));
+
+        parentLookup.mockClear();
+
+        // Look up ../config/settings.json — no individual lookup needed
+        const result = parentTfs.lookup(
+          p('/project/../config/settings.json'),
+        );
+        expect(result.exists).toBe(true);
+        expect(parentLookup).not.toHaveBeenCalled();
+      });
+
+      test('after readdir, missing child returns null without fallback.lookup', () => {
+        const parentDir = mockPathModule.dirname(p('/project'));
+        let populatedMap: ?Map<string, mixed> = null;
+        parentReaddir.mockImplementation(
+          (absPath: string, dirNode: mixed) => {
+            if (absPath === parentDir) {
+              if (dirNode != null && dirNode === populatedMap) {
+                return (dirNode: any);
+              }
+              populatedMap = new Map<string, mixed>([
+                ['lib', new Map()],
+              ]);
+              return populatedMap;
+            }
+            return null;
+          },
+        );
+
+        // Populate the parent via readdir
+        parentTfs.lookup(p('/project/../lib/something.js'));
+        parentLookup.mockClear();
+
+        // A missing sibling should return {exists: false} without calling
+        // fallback.lookup — the readdir already showed it doesn't exist.
+        const result = parentTfs.lookup(
+          p('/project/../nonexistent/file.js'),
+        );
+        expect(result.exists).toBe(false);
+        expect(parentLookup).not.toHaveBeenCalled();
+      });
+
+      test('skips readdir for node_modules parents, uses individual lookup', () => {
+        const parentDir = mockPathModule.dirname(p('/project'));
+        parentReaddir.mockImplementation((absPath: string) => {
+          if (absPath === parentDir) {
+            // readdir returns node_modules as an empty sentinel Map —
+            // its children are NOT eagerly populated by the parent readdir.
+            return new Map<string, mixed>([
+              ['node_modules', new Map()],
+            ]);
+          }
+          return null;
+        });
+
+        // Look up a package inside ../node_modules — should NOT readdir
+        // node_modules (too large), should use individual lookup instead.
+        parentLookup.mockImplementation((absPath: string) => {
+          const normalized = absPath.replace(/\\/g, '/');
+          if (normalized.endsWith('/react')) {
+            return new Map<string, mixed>([
+              ['index.js', [0, 0, 0, null, 0, null]],
+            ]);
+          }
+          return null;
+        });
+
+        const result = parentTfs.lookup(
+          p('/project/../node_modules/react/index.js'),
+        );
+        expect(result.exists).toBe(true);
+
+        // readdir should have been called for the parent (..),
+        // which discovered node_modules as an empty sentinel.
+        // But NOT called for node_modules itself.
+        const readdirPaths = parentReaddir.mock.calls.map(c => c[0]);
+        expect(readdirPaths.some(
+          rp => rp.replace(/\\/g, '/').endsWith('/node_modules'),
+        )).toBe(false);
+
+        // fallback.lookup was called for 'react' (individual package lookup
+        // inside node_modules), because node_modules skips readdir.
+        expect(parentLookup).toHaveBeenCalled();
+      });
+    });
+
     describe('root scoping', () => {
       let scopedTfs: TreeFSType;
-      let scopedLookup: JestMockFn<[string], FileMetadata | Map<string, mixed> | null>;
+      let scopedLookup: JestMockFn<
+        [string, mixed],
+        FileMetadata | Map<string, mixed> | null,
+      >;
       let scopedReaddir: JestMockFn<
-        [string],
+        [string, mixed],
         ?Map<string, FileMetadata | Map<string, mixed>>,
       >;
 
@@ -1438,20 +1697,39 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         const result = scopedTfs.lookup(p('/project/src/missing.js'));
         expect(result.exists).toBe(false);
         expect(scopedLookup).not.toHaveBeenCalled();
+        expect(scopedReaddir).not.toHaveBeenCalled();
       });
 
       test('falls back for paths outside roots', () => {
+        // The rootNode (parentCanonicalPath '') skips readdir and uses
+        // individual lookup. node_modules also skips readdir (too large).
+        // So lookup is called for node_modules and foo, then readdir
+        // is called for foo's contents (eligible for readdir).
+        const fooDir = new Map<string, mixed>([
+          ['index.js', [0, 0, 0, null, 0, null]],
+        ]);
+        const nmDir = new Map<string, mixed>([
+          ['foo', fooDir],
+        ]);
         scopedLookup.mockImplementation((absPath: string) => {
           const normalized = absPath.replace(/\\/g, '/');
           if (normalized.endsWith('/node_modules')) {
-            const children: Map<string, mixed> = new Map();
-            children.set('foo', new Map([
-              ['index.js', [0, 0, 0, null, 0, null]],
-            ]));
-            return children;
+            return nmDir;
+          }
+          if (normalized.endsWith('/node_modules/foo')) {
+            return fooDir;
           }
           return null;
         });
+        scopedReaddir.mockImplementation(
+          (absPath: string, dirNode: mixed) => {
+            const normalized = absPath.replace(/\\/g, '/');
+            if (normalized.endsWith('/node_modules/foo')) {
+              return fooDir;
+            }
+            return null;
+          },
+        );
 
         const result = scopedTfs.lookup(
           p('/project/node_modules/foo/index.js'),
@@ -1464,15 +1742,16 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         const result = scopedTfs.lookup(p('/project/src/lib/utils.js'));
         expect(result.exists).toBe(false);
         expect(scopedLookup).not.toHaveBeenCalled();
+        expect(scopedReaddir).not.toHaveBeenCalled();
       });
 
       test('handles multiple roots correctly', () => {
         const multiLookup: JestMockFn<
-          [string],
+          [string, mixed],
           FileMetadata | Map<string, mixed> | null,
         > = jest.fn(() => null);
         const multiReaddir: JestMockFn<
-          [string],
+          [string, mixed],
           ?Map<string, FileMetadata | Map<string, mixed>>,
         > = jest.fn(() => null);
         const multiRootTfs = new TreeFS({
@@ -1494,12 +1773,15 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         // Inside first root — no fallback
         multiRootTfs.lookup(p('/project/src/missing.js'));
         expect(multiLookup).not.toHaveBeenCalled();
+        expect(multiReaddir).not.toHaveBeenCalled();
 
         // Inside second root — no fallback
         multiRootTfs.lookup(p('/project/lib/missing.js'));
         expect(multiLookup).not.toHaveBeenCalled();
+        expect(multiReaddir).not.toHaveBeenCalled();
 
-        // Outside all roots — fallback fires
+        // Outside all roots — fallback fires (lookup on the rootNode,
+        // since parentCanonicalPath '' skips readdir)
         multiRootTfs.lookup(p('/project/vendor/missing.js'));
         expect(multiLookup).toHaveBeenCalled();
       });

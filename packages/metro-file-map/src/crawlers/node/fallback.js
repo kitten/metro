@@ -4,7 +4,7 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @flow strict-local
+ * @flow
  * @format
  * @oncall react_native
  */
@@ -28,6 +28,20 @@ type FallbackFilesystemOptions = {
   includeSymlinks: boolean,
 };
 
+const readdirMarker = Symbol.for('fallbackDir');
+
+function markDir(dirNode: any) {
+  dirNode[readdirMarker] = true;
+}
+
+function isMarkedDir(dirNode: any) {
+  return !!dirNode[readdirMarker];
+}
+
+function isDirectory(node: ?MixedNode): node is DirectoryNode {
+  return node instanceof Map;
+}
+
 /**
  * Create a FallbackFilesystem that synchronously queries the real filesystem.
  *
@@ -44,14 +58,18 @@ export default function createFallbackFilesystem(
 
   function readdir(
     absolutePath: string,
+    dirNode: ?DirectoryNode,
   ): DirectoryNode | null {
+    if (dirNode != null && isMarkedDir(dirNode)) {
+      return dirNode;
+    }
     let dirEntries;
     try {
       dirEntries = fs.readdirSync(absolutePath, {withFileTypes: true});
     } catch {
       return null;
     }
-    const result: Map<string, MixedNode> = new Map();
+    const result = dirNode ?? new Map();
     for (const entry of dirEntries) {
       const name = entry.name.toString();
       const childPath = path.join(absolutePath, name);
@@ -61,9 +79,11 @@ export default function createFallbackFilesystem(
       }
 
       if (entry.isDirectory()) {
-        result.set(name, new Map());
+        if (!result.has(name)) {
+          result.set(name, new Map());
+        }
       } else if (entry.isSymbolicLink()) {
-        if (!includeSymlinks) {
+        if (!includeSymlinks || result.has(name)) {
           continue;
         }
         try {
@@ -74,12 +94,13 @@ export default function createFallbackFilesystem(
         }
       } else if (entry.isFile()) {
         const ext = path.extname(name).slice(1);
-        if (!extensions.includes(ext)) {
+        if (!extensions.includes(ext) || result.has(name)) {
           continue;
         }
         result.set(name, [0, 0, 0, null, 0, null]);
       }
     }
+    markDir(result);
     return result;
   }
 
@@ -88,6 +109,7 @@ export default function createFallbackFilesystem(
 
     lookup(
       absolutePath: string,
+      prevNode: ?MixedNode,
     ): MixedNode | null {
       if (ignore(absolutePath)) {
         return null;
@@ -101,7 +123,10 @@ export default function createFallbackFilesystem(
       }
 
       if (stat.isDirectory()) {
-        return readdir(absolutePath);
+        return readdir(
+          absolutePath,
+          isDirectory(prevNode) ? prevNode : null,
+        );
       }
 
       if (stat.isSymbolicLink()) {

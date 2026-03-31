@@ -501,8 +501,8 @@ type MixedNode = FileMetadata | DirectoryNode;
  *   entries, or null if the directory can't be read.
  */
 export type FallbackFilesystem = {
-  +lookup: (absolutePath: string) => MixedNode | null,
-  +readdir: (absolutePath: string) => DirectoryNode | null,
+  +lookup: (absolutePath: string, prevNode: ?MixedNode) => MixedNode | null,
+  +readdir: (absolutePath: string, dirNode: ?DirectoryNode) => DirectoryNode | null,
 };
 
 export type ProcessFileFunction = (

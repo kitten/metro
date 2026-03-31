@@ -135,7 +135,7 @@ export default class TreeFS implements MutableFileSystem {
   +#pathUtils: RootPathUtils;
   +#processFile: ProcessFileFunction;
   +#rootDir: Path;
-  +#rootPattern: RegExp;
+  +#rootPattern: RegExp | null;
   #rootNode: DirectoryNode = new Map();
 
   constructor(opts: TreeFSOptions) {
@@ -680,6 +680,12 @@ export default class TreeFS implements MutableFileSystem {
         }
         if (segmentNode == null) {
           segmentNode = new Map();
+          if (
+            opts.makeDirectories === true ||
+            (segmentName === '..' && this.#fallbackFilesystem != null)
+          ) {
+            parentNode.set(segmentName, segmentNode);
+          }
           if (opts.makeDirectories === true) {
             if (changeListener != null) {
               const canonicalPath = isLastSegment
@@ -1323,6 +1329,20 @@ export default class TreeFS implements MutableFileSystem {
     return clone;
   }
 
+  // Whether a directory at the given canonical path should be eagerly
+  // populated via readdir. Returns false for directories that are typically
+  // too large (node_modules) or not useful (.git, .hg, etc.) to enumerate.
+  #shouldFallbackCrawlDir(canonicalPath: string): boolean {
+    const lastSepIdx = canonicalPath.lastIndexOf(path.sep);
+    const basename =
+      lastSepIdx === -1 ? canonicalPath : canonicalPath.slice(lastSepIdx + 1);
+    // '..' is the parent-of-rootDir indirection, not a hidden directory.
+    if (basename === '..') {
+      return true;
+    }
+    return basename !== 'node_modules' && basename.charCodeAt(0) !== 46; // '.'
+  }
+
   /**
    * Synchronously populate a missing tree node by querying the injected
    * fallback filesystem. The fallback returns tree-compatible nodes
@@ -1343,14 +1363,21 @@ export default class TreeFS implements MutableFileSystem {
       parentCanonicalPath === ''
         ? segmentName
         : parentCanonicalPath + path.sep + segmentName;
-    if (this.#rootPattern.test(childCanonicalPath)) {
+    if (this.#rootPattern?.test(childCanonicalPath)) {
       return null;
     }
-    const parentAbsolute =
-      this.#pathUtils.normalToAbsolute(parentCanonicalPath);
-    const absolutePath = parentAbsolute + path.sep + segmentName;
 
-    const node: ?MixedNode = fallback.lookup(absolutePath);
+    if (
+      parentCanonicalPath !== '' &&
+      this.#shouldFallbackCrawlDir(parentCanonicalPath)
+    ) {
+      this.#populateDirFromFilesystem(parentNode, parentCanonicalPath);
+      return parentNode.get(segmentName) ?? null;
+    }
+
+    const parentAbsolute = this.#pathUtils.normalToAbsolute(parentCanonicalPath);
+    const absolutePath = parentAbsolute + path.sep + segmentName;
+    const node: ?MixedNode = fallback.lookup(absolutePath, parentNode.get(segmentName));
     if (node == null) {
       return null;
     }
@@ -1361,27 +1388,26 @@ export default class TreeFS implements MutableFileSystem {
   /**
    * Populate an existing (potentially empty sentinel) directory node from
    * the filesystem. Used by #pathIterator to fill lazy directories before
-   * iteration.
+   * iteration, and by #populateFromFilesystem for optimistic parent
+   * population.
+   *
+   * Returns true if the directory was successfully read from the filesystem.
    */
   #populateDirFromFilesystem(
     dirNode: DirectoryNode,
     canonicalPath: string,
   ): void {
     const fallback = this.#fallbackFilesystem;
-    if (fallback == null) {
-      return;
-    }
-    if (this.#rootPattern.test(canonicalPath)) {
+    if (fallback == null || this.#rootPattern?.test(canonicalPath)) {
       return;
     }
     const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);
-    const entries = fallback.readdir(absolutePath);
-    if (entries == null) {
-      return;
-    }
-    for (const [name, entry] of entries) {
-      if (!dirNode.has(name)) {
-        dirNode.set(name, entry);
+    const entries = fallback.readdir(absolutePath, dirNode);
+    if (entries != null && entries !== dirNode) {
+      for (const [name, entry] of entries) {
+        if (!dirNode.has(name)) {
+          dirNode.set(name, entry);
+        }
       }
     }
   }

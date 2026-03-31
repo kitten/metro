@@ -318,10 +318,10 @@ export class RootPathUtils {
 export function pathsToPattern(
   paths: ReadonlyArray<string>,
   pathUtils: RootPathUtils,
-): RegExp {
+): RegExp | null {
   if (paths.length === 0) {
     // Return a pattern that never matches.
-    return /(?!)/;
+    return null;
   }
   const pathsPatterns = paths.map((input) => {
     let pattern = pathUtils.absoluteToNormal(input);
