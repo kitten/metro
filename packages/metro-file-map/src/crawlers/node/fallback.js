@@ -157,10 +157,21 @@ export default function createFallbackFilesystem(
 // too large (node_modules) or not useful (.git, .hg, etc.) to enumerate.
 export function shouldFallbackCrawlDir(canonicalPath: string): boolean {
   const lastSepIdx = canonicalPath.lastIndexOf(path.sep);
-  const basename = lastSepIdx === -1 ? canonicalPath : canonicalPath.slice(lastSepIdx + 1);
-  // '..' is the parent-of-rootDir indirection, not a hidden directory.
-  if (basename === '..') {
+  const baseStart = lastSepIdx + 1;
+  const baseLen = canonicalPath.length - baseStart;
+  if (
+    baseLen === 2 &&
+    canonicalPath.charCodeAt(baseStart) === 46 /*'.'*/ &&
+    canonicalPath.charCodeAt(baseStart + 1) === 46 /*'.'*/
+  ) {
+    // '..' is the parent-of-rootDir indirection, not a hidden directory.
+    return true;
+  } else if (canonicalPath.charCodeAt(baseStart) === 46 /*'.'*/) {
+    // starts with '.'
+    return false;
+  } else if (baseLen === 12 && canonicalPath.startsWith('node_modules', baseStart)) {
+    return false;
+  } else {
     return true;
   }
-  return basename !== 'node_modules' && basename.charCodeAt(0) !== 46; // '.'
 }
