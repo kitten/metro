@@ -485,7 +485,7 @@ export interface MutableFileSystem extends FileSystem {
 
 export type Path = string;
 
-type DirectoryNode = Map<string, MixedNode>;
+type DirectoryNode = Map<string, MixedNode | null>;
 type MixedNode = FileMetadata | DirectoryNode;
 
 /**

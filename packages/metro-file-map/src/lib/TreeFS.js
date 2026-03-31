@@ -26,7 +26,7 @@ import {RootPathUtils, pathsToPattern} from './RootPathUtils';
 import invariant from 'invariant';
 import path from 'path';
 
-type DirectoryNode = Map<string, MixedNode>;
+type DirectoryNode = Map<string, MixedNode | null>;
 type FileNode = FileMetadata;
 type MixedNode = FileNode | DirectoryNode;
 
@@ -34,8 +34,8 @@ function isDirectory(node: ?MixedNode): node is DirectoryNode {
   return node instanceof Map;
 }
 
-function isRegularFile(node: FileNode): boolean {
-  return node[H.SYMLINK] === 0;
+function isRegularFile(node: ?FileNode): boolean {
+  return node != null && node[H.SYMLINK] === 0;
 }
 
 type NormalizedSymlinkTarget = {
@@ -1115,7 +1115,9 @@ export default class TreeFS implements MutableFileSystem {
     metadata: FileMetadata,
   }> {
     for (const [name, node] of rootNode) {
-      if (
+      if (node == null) {
+        continue;
+      } else if (
         !opts.includeNodeModules &&
         isDirectory(node) &&
         name === 'node_modules'
@@ -1141,12 +1143,12 @@ export default class TreeFS implements MutableFileSystem {
     node: DirectoryNode,
     parent: ?DirectoryNode,
     ancestorOfRootIdx: ?number,
-  ): Iterator<[string, MixedNode]> {
+  ): Iterator<[string, MixedNode | null]> {
     if (ancestorOfRootIdx != null && ancestorOfRootIdx > 0 && parent) {
       yield [
         this.#pathUtils.getBasenameOfNthAncestor(ancestorOfRootIdx - 1),
         parent,
-      ] as [string, MixedNode];
+      ] as [string, MixedNode | null];
     }
     yield* node.entries();
   }
@@ -1186,7 +1188,9 @@ export default class TreeFS implements MutableFileSystem {
       iterationRootParentNode,
       ancestorOfRootIdx,
     )) {
-      if (opts.subtreeOnly && name === '..') {
+      if (node == null) {
+        continue;
+      } else if (opts.subtreeOnly && name === '..') {
         continue;
       }
 
@@ -1322,7 +1326,7 @@ export default class TreeFS implements MutableFileSystem {
     for (const [name, node] of root) {
       if (isDirectory(node)) {
         clone.set(name, this.#cloneTree(node));
-      } else {
+      } else if (node != null) {
         clone.set(name, [...node]);
       }
     }
@@ -1365,24 +1369,21 @@ export default class TreeFS implements MutableFileSystem {
         : parentCanonicalPath + path.sep + segmentName;
     if (this.#rootPattern?.test(childCanonicalPath)) {
       return null;
-    }
-
-    if (
+    } else if (
       parentCanonicalPath !== '' &&
       this.#shouldFallbackCrawlDir(parentCanonicalPath)
     ) {
       this.#populateDirFromFilesystem(parentNode, parentCanonicalPath);
       return parentNode.get(segmentName) ?? null;
+    } else if (parentNode.has(segmentName)) {
+      return parentNode.get(segmentName) ?? null;
+    } else {
+      const parentAbsolute = this.#pathUtils.normalToAbsolute(parentCanonicalPath);
+      const absolutePath = parentAbsolute + path.sep + segmentName;
+      const node = fallback.lookup(absolutePath, parentNode.get(segmentName));
+      parentNode.set(segmentName, node);
+      return node;
     }
-
-    const parentAbsolute = this.#pathUtils.normalToAbsolute(parentCanonicalPath);
-    const absolutePath = parentAbsolute + path.sep + segmentName;
-    const node: ?MixedNode = fallback.lookup(absolutePath, parentNode.get(segmentName));
-    if (node == null) {
-      return null;
-    }
-    parentNode.set(segmentName, node);
-    return node;
   }
 
   /**

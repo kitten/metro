@@ -18,7 +18,7 @@ import type {
 import * as fs from 'graceful-fs';
 import * as path from 'path';
 
-type DirectoryNode = Map<string, MixedNode>;
+type DirectoryNode = Map<string, MixedNode | null>;
 type FileNode = FileMetadata;
 type MixedNode = FileNode | DirectoryNode;
 
