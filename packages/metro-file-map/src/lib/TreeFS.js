@@ -23,7 +23,7 @@ import type {
 
 import H from '../constants';
 import {shouldFallbackCrawlDir} from '../crawlers/node/fallback';
-import {RootPathUtils, pathsToPattern} from './RootPathUtils';
+import {RootPathUtils, getAncestorOfRootIdx, pathsToPattern} from './RootPathUtils';
 import invariant from 'invariant';
 import path from 'path';
 
@@ -134,7 +134,7 @@ type MetadataIteratorOptions = Readonly<{
 export default class TreeFS implements MutableFileSystem {
   +#cachedNormalSymlinkTargets: WeakMap<FileNode, NormalizedSymlinkTarget> =
     new WeakMap();
-  +#fallbackBoundary: ?string;
+  +#fallbackBoundaryDepth: ?number;
   +#fallbackFilesystem: ?FallbackFilesystem;
   +#pathUtils: RootPathUtils;
   +#processFile: ProcessFileFunction;
@@ -150,13 +150,11 @@ export default class TreeFS implements MutableFileSystem {
     this.#processFile = processFile;
     this.#fallbackFilesystem = fallbackFilesystem ?? null;
     if (serverRoot != null) {
-      const boundaryNormal = this.#pathUtils.absoluteToNormal(serverRoot);
-      this.#fallbackBoundary =
-        boundaryNormal !== ''
-          ? boundaryNormal + path.sep + '..' + path.sep
-          : '..' + path.sep;
+      this.#fallbackBoundaryDepth = getAncestorOfRootIdx(
+        this.#pathUtils.absoluteToNormal(serverRoot),
+      );
     } else {
-      this.#fallbackBoundary = null;
+      this.#fallbackBoundaryDepth = null;
     }
     this.#rootPattern = pathsToPattern(roots ?? [], this.#pathUtils);
     if (files != null) {
@@ -1368,10 +1366,8 @@ export default class TreeFS implements MutableFileSystem {
   }
 
   #isOutsideFallbackBoundary(canonicalPath: string): boolean {
-    return (
-      this.#fallbackBoundary != null &&
-      canonicalPath.startsWith(this.#fallbackBoundary)
-    );
+    const maxDepth = this.#fallbackBoundaryDepth;
+    return maxDepth != null && getAncestorOfRootIdx(canonicalPath) > maxDepth;
   }
 
   /**
