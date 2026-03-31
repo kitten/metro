@@ -164,7 +164,7 @@ export default class TreeFS implements MutableFileSystem {
   }
 
   getSerializableSnapshot(): CacheData['fileSystemData'] {
-    return this.#cloneTree(this.#rootNode);
+    return this.#cloneTree(this.#rootNode, '');
   }
 
   static fromDeserializedSnapshot(args: DeserializedSnapshotInput): TreeFS {
@@ -1346,12 +1346,20 @@ export default class TreeFS implements MutableFileSystem {
     return result.node;
   }
 
-  #cloneTree(root: DirectoryNode): DirectoryNode {
+  #cloneTree(root: DirectoryNode, prefix: string): DirectoryNode {
     const clone: DirectoryNode = new Map();
     for (const [name, node] of root) {
-      if (isDirectory(node)) {
-        clone.set(name, this.#cloneTree(node));
-      } else if (node != null) {
+      if (node == null) {
+        continue;
+      } else if (isDirectory(node)) {
+        const childPath = prefix === '' ? name : prefix + path.sep + name;
+        if (
+          this.#rootPattern == null ||
+          this.#rootPattern?.test(childPath + path.sep)
+        ) {
+          clone.set(name, this.#cloneTree(node, childPath));
+        }
+      } else {
         clone.set(name, [...node]);
       }
     }

@@ -1786,5 +1786,147 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         expect(multiLookup).toHaveBeenCalled();
       });
     });
+
+    describe('cache serialization', () => {
+      test('excludes fallback-discovered files outside roots from snapshot', () => {
+        const tfsWithRoots = new TreeFS({
+          rootDir: p('/mono/packages/app'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+          fallbackFilesystem: {
+            lookup: jest.fn((absPath: string) => {
+              const normalized = absPath.replace(/\\/g, '/');
+              if (normalized.endsWith('/mono/node_modules/foo')) {
+                return new Map();
+              }
+              return null;
+            }),
+            readdir: jest.fn((absPath: string) => {
+              const normalized = absPath.replace(/\\/g, '/');
+              // readdir of /mono (the parent of node_modules)
+              if (normalized.endsWith('/mono')) {
+                return new Map<string, mixed>([
+                  ['packages', new Map()],
+                  ['node_modules', new Map()],
+                ]);
+              }
+              if (normalized.endsWith('/mono/node_modules/foo')) {
+                return new Map<string, mixed>([
+                  ['index.js', [200, 20, 0, null, 0, null]],
+                  ['utils.js', [300, 30, 0, null, 0, null]],
+                ]);
+              }
+              return null;
+            }),
+          },
+          roots: [p('/mono/packages/app')],
+        });
+
+        // Trigger fallback discovery for a path outside roots
+        const result = tfsWithRoots.lookup(
+          p('/mono/node_modules/foo/index.js'),
+        );
+        expect(result.exists).toBe(true);
+
+        // Verify fallback file is in the live tree
+        expect(
+          tfsWithRoots.lookup(p('/mono/node_modules/foo/utils.js')).exists,
+        ).toBe(true);
+
+        // Serialize — fallback files should be excluded
+        const snapshot = tfsWithRoots.getSerializableSnapshot();
+
+        // Restore into a new TreeFS (no fallback) and check contents
+        const restored = TreeFS.fromDeserializedSnapshot({
+          rootDir: p('/mono/packages/app'),
+          // $FlowFixMe[incompatible-call]
+          fileSystemData: snapshot,
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+        });
+
+        // Crawled file survives serialization
+        expect(restored.lookup(p('/mono/packages/app/src/index.js')).exists).toBe(
+          true,
+        );
+
+        // Fallback-discovered files are NOT in the serialized snapshot
+        expect(
+          restored.lookup(p('/mono/node_modules/foo/index.js')).exists,
+        ).toBe(false);
+        expect(
+          restored.lookup(p('/mono/node_modules/foo/utils.js')).exists,
+        ).toBe(false);
+      });
+
+      test('excludes .. subtrees even if roots include paths under ..', () => {
+        // When roots includes a path outside rootDir (under ..), the ..
+        // directory doesn't match rootPattern so the entire subtree is
+        // excluded from the snapshot. Those files are crawled, so they
+        // will be re-added by getDifference on the next warm start.
+        const tfsMultiRoot = new TreeFS({
+          rootDir: p('/mono/packages/app'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+            [p(platform === 'win32' ? '..\\shared\\lib\\util.js' : '../shared/lib/util.js'), [200, 20, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+          roots: [p('/mono/packages/app'), p('/mono/packages/shared/lib')],
+        });
+
+        const snapshot = tfsMultiRoot.getSerializableSnapshot();
+        const restored = TreeFS.fromDeserializedSnapshot({
+          rootDir: p('/mono/packages/app'),
+          // $FlowFixMe[incompatible-call]
+          fileSystemData: snapshot,
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+        });
+
+        // File inside rootDir survives
+        expect(
+          restored.lookup(p('/mono/packages/app/src/index.js')).exists,
+        ).toBe(true);
+        // File under .. is excluded (will be re-crawled on warm start)
+        expect(
+          restored.lookup(p('/mono/packages/shared/lib/util.js')).exists,
+        ).toBe(false);
+      });
+
+      test('serializes everything when no roots are configured', () => {
+        const tfsNoRoots = new TreeFS({
+          rootDir: p('/project'),
+          files: new Map<CanonicalPath, FileMetadata>([
+            [p('src/index.js'), [100, 10, 0, null, 0, null]],
+            [p(platform === 'win32' ? '..\\outside\\lib.js' : '../outside/lib.js'), [200, 20, 0, null, 0, null]],
+          ]),
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+        });
+
+        const snapshot = tfsNoRoots.getSerializableSnapshot();
+        const restored = TreeFS.fromDeserializedSnapshot({
+          rootDir: p('/project'),
+          // $FlowFixMe[incompatible-call]
+          fileSystemData: snapshot,
+          processFile: () => {
+            throw new Error('Not implemented');
+          },
+        });
+
+        // All files survive when no roots are set (no filtering)
+        expect(restored.lookup(p('/project/src/index.js')).exists).toBe(true);
+        expect(restored.lookup(p('/outside/lib.js')).exists).toBe(true);
+      });
+    });
   });
 });
