@@ -16,7 +16,7 @@ import type {
 } from '../../flow-types';
 
 import * as fs from 'graceful-fs';
-import * as path from 'path';
+import path from 'path';
 
 type DirectoryNode = Map<string, MixedNode | null>;
 type FileNode = FileMetadata;
@@ -72,7 +72,7 @@ export default function createFallbackFilesystem(
     const result = dirNode ?? new Map();
     for (const entry of dirEntries) {
       const name = entry.name.toString();
-      const childPath = path.join(absolutePath, name);
+      const childPath = absolutePath + path.sep + name;
 
       if (ignore(childPath)) {
         continue;
@@ -123,13 +123,11 @@ export default function createFallbackFilesystem(
       }
 
       if (stat.isDirectory()) {
-        return readdir(
-          absolutePath,
-          isDirectory(prevNode) ? prevNode : null,
-        );
-      }
-
-      if (stat.isSymbolicLink()) {
+        const dirNode = isDirectory(prevNode) ? prevNode : null;
+        return shouldFallbackCrawlDir(absolutePath)
+          ? readdir(absolutePath, dirNode)
+          : dirNode ?? new Map();
+      } else if (stat.isSymbolicLink()) {
         if (!includeSymlinks) {
           return null;
         }
@@ -139,18 +137,30 @@ export default function createFallbackFilesystem(
         } catch {
           return null;
         }
-      }
-
-      if (stat.isFile()) {
+      } else if (stat.isFile()) {
         // Check extension — symlinks bypass this check (same as node crawler)
         const ext = path.extname(absolutePath).slice(1);
         if (!extensions.includes(ext)) {
           return null;
+        } else {
+          return [stat.mtime.getTime(), stat.size, 0, null, 0, null];
         }
-        return [stat.mtime.getTime(), stat.size, 0, null, 0, null];
+      } else {
+        return null;
       }
-
-      return null;
     },
   };
+}
+
+// Whether a directory at the given canonical path should be eagerly
+// populated via readdir. Returns false for directories that are typically
+// too large (node_modules) or not useful (.git, .hg, etc.) to enumerate.
+export function shouldFallbackCrawlDir(canonicalPath: string): boolean {
+  const lastSepIdx = canonicalPath.lastIndexOf(path.sep);
+  const basename = lastSepIdx === -1 ? canonicalPath : canonicalPath.slice(lastSepIdx + 1);
+  // '..' is the parent-of-rootDir indirection, not a hidden directory.
+  if (basename === '..') {
+    return true;
+  }
+  return basename !== 'node_modules' && basename.charCodeAt(0) !== 46; // '.'
 }

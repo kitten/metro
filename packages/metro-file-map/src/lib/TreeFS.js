@@ -22,6 +22,7 @@ import type {
 } from '../flow-types';
 
 import H from '../constants';
+import {shouldFallbackCrawlDir} from '../crawlers/node/fallback';
 import {RootPathUtils, pathsToPattern} from './RootPathUtils';
 import invariant from 'invariant';
 import path from 'path';
@@ -1373,20 +1374,6 @@ export default class TreeFS implements MutableFileSystem {
     );
   }
 
-  // Whether a directory at the given canonical path should be eagerly
-  // populated via readdir. Returns false for directories that are typically
-  // too large (node_modules) or not useful (.git, .hg, etc.) to enumerate.
-  #shouldFallbackCrawlDir(canonicalPath: string): boolean {
-    const lastSepIdx = canonicalPath.lastIndexOf(path.sep);
-    const basename =
-      lastSepIdx === -1 ? canonicalPath : canonicalPath.slice(lastSepIdx + 1);
-    // '..' is the parent-of-rootDir indirection, not a hidden directory.
-    if (basename === '..') {
-      return true;
-    }
-    return basename !== 'node_modules' && basename.charCodeAt(0) !== 46; // '.'
-  }
-
   /**
    * Synchronously populate a missing tree node by querying the injected
    * fallback filesystem. The fallback returns tree-compatible nodes
@@ -1411,7 +1398,7 @@ export default class TreeFS implements MutableFileSystem {
       return null;
     } else if (
       parentCanonicalPath !== '' &&
-      this.#shouldFallbackCrawlDir(parentCanonicalPath)
+      shouldFallbackCrawlDir(parentCanonicalPath)
     ) {
       this.#populateDirFromFilesystem(parentNode, parentCanonicalPath);
       return parentNode.get(segmentName) ?? null;
