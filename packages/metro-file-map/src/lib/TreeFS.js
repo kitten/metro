@@ -204,37 +204,6 @@ export default class TreeFS implements MutableFileSystem {
           continue;
         }
 
-        // Lazy-stat: when the crawler didn't provide mtime (skipStat mode),
-        // stat the file on-demand to populate mtime and size for comparison.
-        if (newMetadata[H.MTIME] == null) {
-          const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);
-          try {
-            const stat = fs.lstatSync(absolutePath);
-            newMetadata[H.MTIME] = stat.mtime.getTime();
-            newMetadata[H.SIZE] = stat.size;
-          } catch {
-            // File disappeared between crawl and diff — treat as removed
-            files.delete(canonicalPath);
-            changedFiles.delete(canonicalPath);
-            removedFiles.add(canonicalPath);
-            continue;
-          }
-          // If the crawler reported a symlink without a target (numeric
-          // flag only), read the target now so that it is available if
-          // the entry is kept in changedFiles and later inserted into
-          // the tree.
-          if (newMetadata[H.SYMLINK] === 1) {
-            try {
-              newMetadata[H.SYMLINK] = fs.readlinkSync(absolutePath);
-            } catch {
-              files.delete(canonicalPath);
-              changedFiles.delete(canonicalPath);
-              removedFiles.add(canonicalPath);
-              continue;
-            }
-          }
-        }
-
         if (
           newMetadata[H.MTIME] != null &&
           newMetadata[H.MTIME] != 0 &&
@@ -279,7 +248,21 @@ export default class TreeFS implements MutableFileSystem {
     }
     const {canonicalPath, node: fileMetadata} = result;
 
-    // Empty strings
+    if (fileMetadata[H.MTIME] != null && fileMetadata[H.MTIME] > 0) {
+      const absolutePath = this.#pathUtils.normalToAbsolute(canonicalPath);
+      try {
+        const stat = await fs.promises.stat(absolutePath);
+        const diskMtime = stat.mtime.getTime();
+        if (diskMtime !== fileMetadata[H.MTIME]) {
+          fileMetadata[H.SHA1] = null;
+          fileMetadata[H.MTIME] = diskMtime;
+          fileMetadata[H.SIZE] = stat.size;
+        }
+      } catch {
+        fileMetadata[H.SHA1] = null;
+      }
+    }
+
     const existing = fileMetadata[H.SHA1];
     if (existing != null && existing.length > 0) {
       return {sha1: existing};

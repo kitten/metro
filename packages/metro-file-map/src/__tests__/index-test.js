@@ -194,6 +194,18 @@ jest.mock('fs', () => ({
       }
       return entry.link;
     }),
+    lstat: jest.fn(async path => {
+      if (
+        (mockChangedFiles && path in mockChangedFiles) ||
+        mockFs[path]
+      ) {
+        return {mtime: {getTime: () => 32}, size: 42};
+      }
+      const error = new Error(`Cannot read path '${path}'.`);
+      // $FlowFixMe[prop-missing] code
+      error.code = 'ENOENT';
+      throw error;
+    }),
   },
 }));
 
@@ -1518,6 +1530,7 @@ describe('FileMap', () => {
       [
         {
           computeSha1: false,
+          computeMtime: false,
           filePath: path.join('/', 'project', 'fruits', 'Banana.js'),
           maybeReturnContent: false,
           pluginsToRun: [0],
@@ -1526,6 +1539,7 @@ describe('FileMap', () => {
       [
         {
           computeSha1: false,
+          computeMtime: false,
           filePath: path.join('/', 'project', 'fruits', 'Pear.js'),
           maybeReturnContent: false,
           pluginsToRun: [0],
@@ -1534,6 +1548,7 @@ describe('FileMap', () => {
       [
         {
           computeSha1: false,
+          computeMtime: false,
           filePath: path.join('/', 'project', 'fruits', 'Strawberry.js'),
           maybeReturnContent: false,
           pluginsToRun: [0],
@@ -1542,6 +1557,7 @@ describe('FileMap', () => {
       [
         {
           computeSha1: false,
+          computeMtime: false,
           filePath: path.join('/', 'project', 'fruits', '__mocks__', 'Pear.js'),
           maybeReturnContent: false,
           pluginsToRun: [0],
@@ -1550,6 +1566,7 @@ describe('FileMap', () => {
       [
         {
           computeSha1: false,
+          computeMtime: false,
           filePath: path.join('/', 'project', 'vegetables', 'Melon.js'),
           maybeReturnContent: false,
           pluginsToRun: [0],

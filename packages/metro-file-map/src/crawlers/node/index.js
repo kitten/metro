@@ -17,6 +17,7 @@ import type {
   IgnoreMatcher,
 } from '../../flow-types';
 
+import H from '../../constants';
 import {RootPathUtils} from '../../lib/RootPathUtils';
 import hasNativeFindSupport from './hasNativeFindSupport';
 import {spawn} from 'child_process';
@@ -247,9 +248,50 @@ function findWithoutStat(
   }
 }
 
+/**
+ * Async batch stat for files that exist in the previous filesystem.
+ * On cold start (empty previous FS), this is a no-op — zero stat calls.
+ * On warm start, stats cached files in parallel to populate mtime/size
+ * so that getDifference can do pure in-memory comparison.
+ */
+async function asyncStatKnownFiles(
+  fileData: FileData,
+  previousFileSystem: CrawlerOptions['previousState']['fileSystem'],
+  rootDir: string,
+): Promise<void> {
+  const pathUtils = new RootPathUtils(rootDir);
+  const promises: Array<Promise<void>> = [];
+
+  for (const [normalPath, metadata] of fileData) {
+    if (metadata[H.MTIME] != null && metadata[H.MTIME] > 0) {
+      continue;
+    }
+
+    const absolutePath = pathUtils.normalToAbsolute(normalPath);
+    if (!previousFileSystem.exists(absolutePath)) {
+      continue;
+    }
+
+    promises.push(
+      fs.promises.lstat(absolutePath).then(
+        (stat) => {
+          metadata[H.MTIME] = stat.mtime.getTime();
+          metadata[H.SIZE] = stat.size;
+        },
+        () => {
+          fileData.delete(normalPath);
+        },
+      ),
+    );
+  }
+
+  await Promise.all(promises);
+}
+
 export default async function nodeCrawl(
   options: CrawlerOptions,
 ): Promise<CrawlResult> {
+  const skipStat = !!options.skipStat;
   const {
     console,
     previousState,
@@ -261,69 +303,45 @@ export default async function nodeCrawl(
     perfLogger,
     roots,
     abortSignal,
-    skipStat,
     subpath,
   } = options;
 
   abortSignal?.throwIfAborted();
-
   perfLogger?.point('nodeCrawl_start');
+  debug('Using skipStat: %s', !!skipStat);
 
-  const useNativeFind =
-    !skipStat &&
+  let crawlFn: typeof find | typeof findNative | typeof findWithoutStat;
+  if (skipStat) {
+    crawlFn = findWithoutStat;
+  } else if (
     !forceNodeFilesystemAPI &&
     platform() !== 'win32' &&
-    (await hasNativeFindSupport());
+    (await hasNativeFindSupport())
+  ) {
+    crawlFn = findNative;
+  } else {
+    crawlFn = find;
+  }
 
-  debug('Using system find: %s, skipStat: %s', useNativeFind, !!skipStat);
-
-  return new Promise((resolve, reject) => {
-    const callback: Callback = fileData => {
-      const difference = previousState.fileSystem.getDifference(fileData, {
-        subpath,
-      });
-
-      perfLogger?.point('nodeCrawl_end');
-
-      try {
-        // TODO: Use AbortSignal.reason directly when Flow supports it
-        abortSignal?.throwIfAborted();
-      } catch (e) {
-        reject(e);
-      }
-      resolve(difference);
-    };
-
-    if (skipStat) {
-      findWithoutStat(
-        roots,
-        extensions,
-        ignore,
-        includeSymlinks,
-        rootDir,
-        console,
-        callback,
-      );
-    } else if (useNativeFind) {
-      findNative(
-        roots,
-        extensions,
-        ignore,
-        includeSymlinks,
-        rootDir,
-        console,
-        callback,
-      );
-    } else {
-      find(
-        roots,
-        extensions,
-        ignore,
-        includeSymlinks,
-        rootDir,
-        console,
-        callback,
-      );
-    }
+  // (1): Discover files
+  const fileData = await new Promise<FileData>(resolve => {
+    crawlFn(roots, extensions, ignore, includeSymlinks, rootDir, console, resolve);
   });
+
+  perfLogger?.point('nodeCrawl_afterCrawl');
+  abortSignal?.throwIfAborted();
+
+  // (2): Async stat for files that exist in the previous filesystem.
+  if (skipStat) {
+    await asyncStatKnownFiles(fileData, previousState.fileSystem, rootDir);
+    perfLogger?.point('nodeCrawl_afterStat');
+    abortSignal?.throwIfAborted();
+  }
+
+  const difference = previousState.fileSystem.getDifference(fileData, {
+    subpath,
+  });
+
+  perfLogger?.point('nodeCrawl_end');
+  return difference;
 }

@@ -559,6 +559,7 @@ export type WatchmanClocks = Map<Path, WatchmanClockSpec>;
 
 export type WorkerMessage = Readonly<{
   computeSha1: boolean,
+  computeMtime: boolean,
   filePath: string,
   maybeReturnContent: boolean,
   pluginsToRun: ReadonlyArray<number>,
@@ -566,6 +567,8 @@ export type WorkerMessage = Readonly<{
 
 export type WorkerMetadata = Readonly<{
   sha1?: ?string,
+  mtime?: ?number,
+  size?: ?number,
   content?: ?Buffer,
   pluginData?: ReadonlyArray<V8Serializable>,
 }>;

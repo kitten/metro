@@ -23,10 +23,18 @@ let mockPathModule;
 jest.mock('path', () => mockPathModule);
 
 const mockLstatSync = jest.fn();
-jest.mock('fs', () => ({
-  ...jest.requireActual('fs'),
-  lstatSync: mockLstatSync,
-}));
+const mockStatPromise = jest.fn();
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs');
+  return {
+    ...actual,
+    lstatSync: mockLstatSync,
+    promises: {
+      ...actual.promises,
+      stat: mockStatPromise,
+    },
+  };
+});
 
 describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
   // Convenience function to write paths with posix separators but convert them
@@ -42,6 +50,7 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
   beforeEach(() => {
     jest.resetModules();
     mockLstatSync.mockReset();
+    mockStatPromise.mockReset();
     mockPathModule = jest.requireActual<{}>('path')[platform];
     TreeFS = require('../TreeFS').default;
     tfs = new TreeFS({
@@ -388,23 +397,12 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       expect(withEmpty).toEqual(withUndefined);
     });
 
-    test('lazy-stats files with null mtime (skipStat mode, warm start)', () => {
-      // bar.js: cached mtime 234, lazy stat returns 234 → unchanged
-      // foo/another.js: cached mtime 123, lazy stat returns 999 → changed
-      mockLstatSync.mockImplementation((filePath: string) => {
-        const normalized = filePath.replace(/\\/g, '/');
-        if (normalized.endsWith('/bar.js')) {
-          return {mtime: {getTime: () => 234}, size: 3};
-        }
-        if (normalized.endsWith('/another.js')) {
-          return {mtime: {getTime: () => 999}, size: 5};
-        }
-        throw Object.assign(new Error('ENOENT'), {code: 'ENOENT'});
-      });
-
+    test('files with pre-populated mtime are compared (warm start after asyncStatKnownFiles)', () => {
+      // bar.js: cached mtime 234, new mtime 234 → unchanged
+      // foo/another.js: cached mtime 123, new mtime 999 → changed
       const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
-        [p('bar.js'), [null, 0, 0, null, 0, null]],
-        [p('foo/another.js'), [null, 0, 0, null, 0, null]],
+        [p('bar.js'), [234, 3, 0, null, 0, null]],
+        [p('foo/another.js'), [999, 5, 0, null, 0, null]],
       ]);
 
       const result = tfs.getDifference(newFiles);
@@ -415,6 +413,23 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         999,
       );
       expect(result.changedFiles.get(p('foo/another.js'))?.[H.SIZE]).toBe(5);
+      // getDifference no longer does any sync I/O
+      expect(mockLstatSync).not.toHaveBeenCalled();
+    });
+
+    test('files with null mtime stay in changedFiles (new files not in previous FS)', () => {
+      // getDifference does no sync I/O — null mtime means the mtime
+      // comparison won't match, so the file stays in changedFiles.
+      const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
+        [p('bar.js'), [null, 0, 0, null, 0, null]],
+        [p('foo/another.js'), [null, 0, 0, null, 0, null]],
+      ]);
+
+      const result = tfs.getDifference(newFiles);
+
+      expect(result.changedFiles.has(p('bar.js'))).toBe(true);
+      expect(result.changedFiles.has(p('foo/another.js'))).toBe(true);
+      expect(mockLstatSync).not.toHaveBeenCalled();
     });
 
     test('cold start with null mtime does not stat any files', () => {
@@ -435,19 +450,23 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       expect(result.removedFiles.size).toBe(0);
     });
 
-    test('handles ENOENT (file disappeared between crawl and diff)', () => {
-      mockLstatSync.mockImplementation(() => {
-        throw Object.assign(new Error('ENOENT'), {code: 'ENOENT'});
-      });
-
+    test('file with null mtime that exists in old FS stays in changedFiles', () => {
+      // Previously getDifference would lstatSync and handle ENOENT.
+      // Now, files with null mtime are expected to be pre-stat'd by
+      // asyncStatKnownFiles (which removes disappeared files from fileData).
+      // If a file still has null mtime when reaching getDifference, it
+      // stays in changedFiles.
       const newFiles: FileData = new Map<CanonicalPath, FileMetadata>([
         [p('bar.js'), [null, 0, 0, null, 0, null]],
       ]);
 
       const result = tfs.getDifference(newFiles);
 
-      expect(result.removedFiles.has(p('bar.js'))).toBe(true);
-      expect(result.changedFiles.has(p('bar.js'))).toBe(false);
+      // bar.js has null mtime, so mtime comparison doesn't match →
+      // stays in changedFiles
+      expect(result.changedFiles.has(p('bar.js'))).toBe(true);
+      expect(result.removedFiles.has(p('bar.js'))).toBe(false);
+      expect(mockLstatSync).not.toHaveBeenCalled();
     });
   });
 
@@ -1061,6 +1080,11 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         return;
       });
       mockProcessFile.mockClear();
+      // Default: stat returns matching mtime so cached SHA1 is trusted
+      mockStatPromise.mockImplementation(async () => ({
+        mtime: {getTime: () => 123},
+        size: 0,
+      }));
     });
 
     test('returns the precomputed SHA-1 of a file if set', async () => {
@@ -1120,6 +1144,12 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         metadata[H.SHA1] = await processPromise;
       });
       const getOrComputePromise = tfs.getOrComputeSha1(p('bar.js'));
+      // Allow the async stat to resolve before checking processFile.
+      // The stat mock returns a resolved promise, but awaiting it defers
+      // to a microtask. Flushing two microtask rounds ensures the stat
+      // resolves and processFile is called.
+      await Promise.resolve();
+      await Promise.resolve();
       expect(mockProcessFile).toHaveBeenCalledWith(
         p('bar.js'),
         expect.any(Array),

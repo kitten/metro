@@ -44,8 +44,10 @@ class Worker {
   processFile(data /*: WorkerMessage */) /*: WorkerMetadata */ {
     let content /*: ?Buffer */;
     let sha1 /*: WorkerMetadata['sha1'] */;
+    let mtime /*: WorkerMetadata['mtime'] */;
+    let size /*: WorkerMetadata['size'] */;
 
-    const {computeSha1, filePath, pluginsToRun} = data;
+    const {computeSha1, computeMtime, filePath, pluginsToRun} = data;
 
     const getContent = () /*: Buffer */ => {
       if (content == null) {
@@ -65,9 +67,20 @@ class Worker {
       sha1 = sha1hex(getContent());
     }
 
+    // Capture mtime so the cache has it for the next warm start.
+    if (computeMtime) {
+      try {
+        const stat = fs.statSync(filePath);
+        mtime = stat.mtime.getTime();
+        size = stat.size;
+      } catch {
+        // Will be caught as ENOENT by the caller.
+      }
+    }
+
     return content && data.maybeReturnContent
-      ? {content, pluginData, sha1}
-      : {pluginData, sha1};
+      ? {content, pluginData, sha1, mtime, size}
+      : {pluginData, sha1, mtime, size};
   }
 }
 
