@@ -42,8 +42,13 @@ function find(
   const result: FileData = new Map();
   let activeCalls = 0;
   const pathUtils = new RootPathUtils(rootDir);
+  const visited: Set<string> = new Set();
 
   function search(directory: string): void {
+    if (visited.has(directory)) {
+      return;
+    }
+    visited.add(directory);
     activeCalls++;
     fs.readdir(directory, {withFileTypes: true}, (err, entries) => {
       activeCalls--;
@@ -188,8 +193,13 @@ function findWithoutStat(
   const result: FileData = new Map();
   let activeCalls = 0;
   const pathUtils = new RootPathUtils(rootDir);
+  const visited: Set<string> = new Set();
 
   function search(directory: string, dirNormal: string): void {
+    if (visited.has(directory)) {
+      return;
+    }
+    visited.add(directory);
     activeCalls++;
     fs.readdir(directory, {withFileTypes: true}, (err, entries) => {
       activeCalls--;
