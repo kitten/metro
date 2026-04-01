@@ -262,8 +262,14 @@ async function asyncStatKnownFiles(
   const pathUtils = new RootPathUtils(rootDir);
   const promises: Array<Promise<void>> = [];
 
+  const externalPrefix = '..' + path.sep;
   for (const [normalPath, metadata] of fileData) {
-    if (metadata[H.MTIME] != null && metadata[H.MTIME] > 0) {
+    if (metadata[H.SYMLINK] !== 0) {
+      continue;
+    } else if (metadata[H.MTIME] != null && metadata[H.MTIME] > 0) {
+      continue;
+    } else if (normalPath.startsWith(externalPrefix)) {
+      // Skip reading mtime for files outside of project root
       continue;
     }
 
