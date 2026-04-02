@@ -23,11 +23,11 @@ import type {
 
 'use strict';
 
-const {createHash} = require('crypto');
+const {hash} = require('crypto');
 const fs = require('graceful-fs');
 
 function sha1hex(content /*: string | Buffer */) /*: string */ {
-  return createHash('sha1').update(content).digest('hex');
+  return hash('sha1', content, 'hex');
 }
 
 class Worker {
