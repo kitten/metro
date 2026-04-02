@@ -181,6 +181,20 @@ jest.mock('fs', () => ({
     mockFs[path] = data;
   }),
   promises: {
+    readFile: jest.fn(async (path, options) => {
+      if (mockChangedFiles && path in mockChangedFiles) {
+        return mockChangedFiles[path];
+      }
+
+      if (mockFs[path]) {
+        return mockFs[path];
+      }
+
+      const error = new Error(`Cannot read path '${path}'.`);
+      // $FlowFixMe[prop-missing] code
+      error.code = 'ENOENT';
+      throw error;
+    }),
     readlink: jest.fn(async path => {
       const entry = mockFs[path];
       if (!entry) {

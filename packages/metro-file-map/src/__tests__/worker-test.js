@@ -47,21 +47,26 @@ jest.mock('fs', () => {
       `,
   };
 
+  const readImpl = (path: string, options: ?string) => {
+    const entry = mockFs[path];
+    if (entry) {
+      if (typeof entry === 'string') {
+        return options === 'utf8' ? entry : Buffer.from(entry);
+      }
+      if (entry instanceof Buffer) {
+        return options === 'utf8' ? entry.toString('utf8') : entry;
+      }
+      throw new Error('Tried to call readFile on a symlink');
+    }
+    throw new Error(`Cannot read path '${path}'.`);
+  };
+
   return {
     ...jest.createMockFromModule('fs'),
-    readFileSync: jest.fn((path, options) => {
-      const entry = mockFs[path];
-      if (entry) {
-        if (typeof entry === 'string') {
-          return options === 'utf8' ? entry : Buffer.from(entry);
-        }
-        if (entry instanceof Buffer) {
-          return options === 'utf8' ? entry.toString('utf8') : entry;
-        }
-        throw new Error('Tried to call readFile on a symlink');
-      }
-      throw new Error(`Cannot read path '${path}'.`);
-    }),
+    readFileSync: jest.fn(readImpl),
+    promises: {
+      readFile: jest.fn(async (path, options) => readImpl(path, options)),
+    },
   };
 });
 
@@ -202,9 +207,10 @@ describe('worker', () => {
       sha1: undefined,
     });
 
-    // Ensure not disk access happened.
+    // Ensure no disk access happened.
     expect(fs.readFileSync).not.toHaveBeenCalled();
-    expect(fs.readFile).not.toHaveBeenCalled();
+    // $FlowFixMe[prop-missing]
+    expect(fs.promises.readFile).not.toHaveBeenCalled();
   });
 
   test('returns content if requested and content is read', async () => {
@@ -253,8 +259,8 @@ describe('jest-worker interface', () => {
     workerModule = require('../worker');
   });
 
-  test('setup must be called before processFile', () => {
-    expect(() => workerModule.processFile(defaults)).toThrow(
+  test('setup must be called before processFile', async () => {
+    await expect(workerModule.processFile(defaults)).rejects.toThrow(
       new Error('metro-file-map: setup() must be called before processFile()'),
     );
   });
@@ -266,9 +272,9 @@ describe('jest-worker interface', () => {
     );
   });
 
-  test('processFile may be called after setup', () => {
+  test('processFile may be called after setup', async () => {
     jest.mock('mock-haste-impl', () => {}, {virtual: true});
     workerModule.setup({});
-    workerModule.processFile(defaults);
+    await workerModule.processFile(defaults);
   });
 });

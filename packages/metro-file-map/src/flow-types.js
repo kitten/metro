@@ -489,7 +489,7 @@ export type ProcessFileFunction = (
   normalPath: string,
   metadata: FileMetadata,
   request: Readonly<{computeSha1: boolean}>,
-) => ?Buffer;
+) => Promise<?Buffer>;
 
 export type RawMockMap = Readonly<{
   duplicates: Map<

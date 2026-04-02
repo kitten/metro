@@ -374,12 +374,12 @@ export default class FileMap extends EventEmitter {
 
         const rootDir = this.#options.rootDir;
         this.#startupPerfLogger?.point('constructFileSystem_start');
-        const processFile: ProcessFileFunction = (
+        const processFile: ProcessFileFunction = async (
           normalPath,
           metadata,
           opts,
         ) => {
-          const result = this.#fileProcessor.processRegularFile(
+          const result = await this.#fileProcessor.processRegularFile(
             normalPath,
             metadata,
             {

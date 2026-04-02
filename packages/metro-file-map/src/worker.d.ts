@@ -22,13 +22,13 @@ declare const worker: {
   /**
    * Called by jest-worker with each workload
    */
-  processFile: (data: WorkerMessage) => WorkerMetadata;
+  processFile: (data: WorkerMessage) => Promise<WorkerMetadata>;
   /**
    * Exposed for use outside a jest-worker context, ie when processing in-band.
    */
   Worker: {
     new (setupArgs: WorkerSetupArgs): {
-      processFile(data: WorkerMessage): WorkerMetadata;
+      processFile(data: WorkerMessage): Promise<WorkerMetadata>;
     };
   };
 };

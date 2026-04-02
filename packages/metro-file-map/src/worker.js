@@ -41,7 +41,7 @@ class Worker {
     });
   }
 
-  processFile(data /*: WorkerMessage */) /*: WorkerMetadata */ {
+  async processFile(data /*: WorkerMessage */) /*: Promise<WorkerMetadata> */ {
     let content /*: ?Buffer */;
     let sha1 /*: WorkerMetadata['sha1'] */;
 
@@ -54,6 +54,10 @@ class Worker {
 
       return content;
     };
+
+    if (content == null && computeSha1) {
+      content = await fs.promises.readFile(filePath);
+    }
 
     const workerUtils = {getContent};
     const pluginData = pluginsToRun.map(pluginIdx =>
@@ -80,7 +84,7 @@ function setup(args /*: WorkerSetupArgs */) /*: void */ {
   singletonWorker = new Worker(args);
 }
 
-function processFile(data /*: WorkerMessage */) /*: WorkerMetadata */ {
+async function processFile(data /*: WorkerMessage */) /*: Promise<WorkerMetadata> */ {
   if (!singletonWorker) {
     throw new Error(
       'metro-file-map: setup() must be called before processFile()',
