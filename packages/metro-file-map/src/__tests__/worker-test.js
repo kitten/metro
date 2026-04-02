@@ -204,11 +204,9 @@ describe('worker', () => {
       }),
     ).toEqual({
       pluginData: ['Pear'],
-      sha1: undefined,
     });
 
     // Ensure no disk access happened.
-    expect(fs.readFileSync).not.toHaveBeenCalled();
     // $FlowFixMe[prop-missing]
     expect(fs.promises.readFile).not.toHaveBeenCalled();
   });
@@ -237,9 +235,7 @@ describe('worker', () => {
         maybeReturnContent: true,
       }),
     ).toEqual({
-      content: undefined,
       pluginData: ['Pear'],
-      sha1: undefined,
     });
   });
 

@@ -18,7 +18,7 @@ declare class DependencyExtractorWorker implements MetadataWorker {
   constructor(opts: Readonly<{dependencyExtractor: null | undefined | string}>);
   processFile(
     data: WorkerMessage,
-    utils: Readonly<{getContent: () => Buffer}>,
-  ): V8Serializable;
+    utils: Readonly<{getContent: () => Promise<Buffer>}>,
+  ): Promise<V8Serializable>;
 }
 export = DependencyExtractorWorker;

@@ -814,7 +814,7 @@ describe('FileMap', () => {
       size: 42,
     });
     // $FlowFixMe[incompatible-use]
-    expect(fs.readFileSync.mock.calls.map(call => call[0])).not.toContain(
+    expect(fs.promises.readFile.mock.calls.map(call => call[0])).not.toContain(
       path.join('video', 'video.mp4'),
     );
   });
@@ -844,7 +844,7 @@ describe('FileMap', () => {
 
     // 5 modules - the node_module
     // $FlowFixMe[incompatible-use]
-    expect(fs.readFileSync.mock.calls.length).toBe(5);
+    expect(fs.promises.readFile.mock.calls.length).toBe(5);
   });
 
   test('builds a mock map if mocksPattern is non-null', async () => {
@@ -1031,10 +1031,10 @@ describe('FileMap', () => {
     // The first run should access the file system five times for the regular
     // files in the system.
     // $FlowFixMe[incompatible-use]
-    expect(fs.readFileSync.mock.calls.length).toBe(5);
+    expect(fs.promises.readFile.mock.calls.length).toBe(5);
 
     // $FlowFixMe[incompatible-type]
-    fs.readFileSync.mockClear();
+    fs.promises.readFile.mockClear();
 
     // Explicitly mock that no files have changed.
     mockChangedFiles = Object.create(null);
@@ -1052,7 +1052,7 @@ describe('FileMap', () => {
     expect(mockCacheManager.read).toHaveBeenCalledTimes(2);
     // Expect no fs reads, because there have been no changes
     // $FlowFixMe[incompatible-use]
-    expect(fs.readFileSync.mock.calls.length).toBe(0);
+    expect(fs.promises.readFile.mock.calls.length).toBe(0);
     expect(deepNormalize(data?.clocks)).toEqual(mockClocks);
     expect(serialize(data?.fileSystem)).toEqual(
       serialize(initialData?.fileSystem),
@@ -1073,7 +1073,7 @@ describe('FileMap', () => {
     ).toEqual(['Strawberry']);
 
     // $FlowFixMe[incompatible-type]
-    fs.readFileSync.mockClear();
+    fs.promises.readFile.mockClear();
     expect(mockCacheManager.read).toHaveBeenCalledTimes(1);
 
     // Let's assume one JS file has changed.
@@ -1093,8 +1093,10 @@ describe('FileMap', () => {
     const data = cacheContent;
 
     expect(mockCacheManager.read).toHaveBeenCalledTimes(2);
-    expect(fs.readFileSync).toHaveBeenCalledTimes(1);
-    expect(fs.readFileSync).toBeCalledWith(
+    // $FlowFixMe[incompatible-use]
+    expect(fs.promises.readFile).toHaveBeenCalledTimes(1);
+    // $FlowFixMe[incompatible-use]
+    expect(fs.promises.readFile).toBeCalledWith(
       path.join('/', 'project', 'fruits', 'Banana.js'),
     );
 
@@ -1108,7 +1110,7 @@ describe('FileMap', () => {
   test('correctly handles file deletions', async () => {
     await buildNewFileMap();
     // $FlowFixMe[incompatible-type]
-    fs.readFileSync.mockClear();
+    fs.promises.readFile.mockClear();
 
     // Let's assume one JS file was removed.
     delete mockFs[path.join('/', 'project', 'fruits', 'Banana.js')];

@@ -26,7 +26,7 @@ import type {
 const {hash} = require('crypto');
 const fs = require('graceful-fs');
 
-function sha1hex(content /*: string | Buffer */) /*: string */ {
+async function sha1hex(content /*: string | Buffer */) /*: Promise<string> */ {
   return hash('sha1', content, 'hex');
 }
 
@@ -42,36 +42,38 @@ class Worker {
   }
 
   async processFile(data /*: WorkerMessage */) /*: Promise<WorkerMetadata> */ {
-    let content /*: ?Buffer */;
-    let sha1 /*: WorkerMetadata['sha1'] */;
+    let contentPromise /*: ?Promise<Buffer> */;
+    let sha1Promise /*: ?Promise<WorkerMetadata['sha1']> */;
 
     const {computeSha1, filePath, pluginsToRun} = data;
 
-    const getContent = () /*: Buffer */ => {
-      if (content == null) {
-        content = fs.readFileSync(filePath);
+    const getContent = () /*: Promise<Buffer> */ => {
+      if (contentPromise == null) {
+        contentPromise  = fs.promises.readFile(filePath);
       }
 
-      return content;
+      return contentPromise;
     };
 
-    if (content == null && computeSha1) {
-      content = await fs.promises.readFile(filePath);
-    }
-
     const workerUtils = {getContent};
-    const pluginData = pluginsToRun.map(pluginIdx =>
-      this.#plugins[pluginIdx].processFile(data, workerUtils),
+    const pluginDataPromise = Promise.all(
+      pluginsToRun.map(pluginIdx =>
+        this.#plugins[pluginIdx].processFile(data, workerUtils),
+      )
     );
 
     // If a SHA-1 is requested on update, compute it.
     if (computeSha1) {
-      sha1 = sha1hex(getContent());
+      sha1Promise = getContent().then(sha1hex);
     }
 
-    return content && data.maybeReturnContent
-      ? {content, pluginData, sha1}
-      : {pluginData, sha1};
+    return {
+      content: contentPromise != null && data.maybeReturnContent
+        ? await contentPromise
+        : undefined,
+      pluginData: await pluginDataPromise,
+      sha1: await sha1Promise,
+    };
   }
 }
 

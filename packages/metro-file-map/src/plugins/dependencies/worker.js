@@ -31,11 +31,11 @@ module.exports = class DependencyExtractorWorker /*:: implements MetadataWorker 
     }
   }
 
-  processFile(
+  async processFile(
     data /*: WorkerMessage */,
-    utils /*: Readonly<{getContent: () => Buffer}> */,
-  ) /*: V8Serializable */ {
-    const content = utils.getContent().toString();
+    utils /*: Readonly<{getContent: () => Promise<Buffer>}> */,
+  ) /*: Promise<V8Serializable> */ {
+    const content = (await utils.getContent()).toString();
     const {filePath} = data;
 
     const dependencies =

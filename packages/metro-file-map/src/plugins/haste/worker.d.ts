@@ -17,8 +17,8 @@ declare class Worker implements MetadataWorker {
   constructor(opts: Readonly<{hasteImplModulePath: null | undefined | string}>);
   processFile(
     data: WorkerMessage,
-    utils: Readonly<{getContent: () => Buffer}>,
-  ): V8Serializable;
+    utils: Readonly<{getContent: () => Promise<Buffer>}>,
+  ): Promise<V8Serializable>;
 }
 
 export = Worker;

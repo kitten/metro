@@ -233,8 +233,8 @@ export type InputFileMapPlugin = FileMapPlugin<empty, empty>;
 export interface MetadataWorker {
   processFile(
     WorkerMessage,
-    Readonly<{getContent: () => Buffer}>,
-  ): V8Serializable;
+    Readonly<{getContent: () => Promise<Buffer>}>,
+  ): V8Serializable | Promise<V8Serializable>;
 }
 
 export type HType = {
