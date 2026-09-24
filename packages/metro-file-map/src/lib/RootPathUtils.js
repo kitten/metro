@@ -8,7 +8,6 @@
  * @format
  */
 
-import normalizePathSeparatorsToSystem from './normalizePathSeparatorsToSystem';
 import invariant from 'invariant';
 import * as path from 'node:path';
 
@@ -179,20 +178,13 @@ export class RootPathUtils {
     symlinkNormalPath: string,
     readlinkResult: string,
   ): string {
-    const target = normalizePathSeparatorsToSystem(readlinkResult);
-    let normal;
-    if (path.isAbsolute(target)) {
-      normal = this.absoluteToNormal(target);
-    } else {
-      // Resolve relative to the symlink's containing directory, expressed as
-      // a root-relative (possibly non-normal) path, then normalize
-      const sepIdx = symlinkNormalPath.lastIndexOf(path.sep);
-      const rootRelativeTarget =
-        sepIdx === -1
-          ? target
-          : symlinkNormalPath.slice(0, sepIdx) + path.sep + target;
-      normal = this.relativeToNormal(rootRelativeTarget);
-    }
+    // readlink returns whatever the link was created with, which need not be
+    // well-formed (e.g. '..', 'a/./b', 'a//b', or '/' separators on Windows),
+    // so resolve with node:path. This runs once per symlink, when its node is
+    // populated, not on traversal.
+    const normal = this.absoluteToNormal(
+      path.resolve(this.#rootDir, symlinkNormalPath, '..', readlinkResult),
+    );
     // Normalization keeps a trailing separator when the result is the root or
     // an ancestor of it (e.g. a link to '/'), and readlink itself may return
     // one. A stored symlink target never has one.

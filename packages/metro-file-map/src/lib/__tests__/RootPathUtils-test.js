@@ -267,6 +267,27 @@ describe.each([['win32'], ['posix']])('RootPathUtils on %s', platform => {
       },
     );
 
+    // readlink returns the target as the link was created, which need not be
+    // well-formed. On Windows, these also use '/' separators.
+    test.each([
+      ['a/link', '..', ''],
+      ['a/link', '.', 'a'],
+      ['a/link', './', 'a'],
+      ['a/link', 'b/..', 'a'],
+      ['a/link', 'b/../c', p('a/c')],
+      ['a/link', 'b/./c', p('a/b/c')],
+      ['a/link', 'b//c', p('a/b/c')],
+      ['a/b/link', '../..', ''],
+      ['a/b/link', '../../..', '..'],
+    ])(
+      'resolves non-well-formed target (%s -> %s) to %s',
+      (symlinkPath, readlinkResult, expected) => {
+        expect(
+          pathUtils.resolveSymlinkToNormal(p(symlinkPath), readlinkResult),
+        ).toEqual(expected);
+      },
+    );
+
     test.each([
       ['link', p('/project/root/target.js'), 'target.js'],
       ['link', p('/project/root/a/b.js'), p('a/b.js')],
