@@ -11,6 +11,7 @@
 
 let mockPathModule;
 jest.mock('path', () => mockPathModule);
+jest.mock('node:path', () => mockPathModule);
 
 describe.each([['win32'], ['posix']])(
   'removeOverlappingRoots on %s',
@@ -62,6 +63,10 @@ describe.each([['win32'], ['posix']])(
       expect(removeOverlappingRoots([p('/a'), p('/a/b'), p('/a/b/c')])).toEqual(
         [p('/a')],
       );
+    });
+
+    test('removes roots nested under a filesystem root', () => {
+      expect(removeOverlappingRoots([p('/a/b'), p('/')])).toEqual([p('/')]);
     });
 
     test('keeps sibling directories', () => {

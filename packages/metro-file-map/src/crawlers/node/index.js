@@ -57,10 +57,14 @@ function find(
           `Error "${err.code ?? err.message}" reading contents of "${directory}", skipping. Add this directory to your ignore list to exclude it.`,
         );
       } else {
+        // A filesystem root ('/', 'C:\\') already ends with a separator.
+        const dirPrefix = directory.endsWith(path.sep)
+          ? directory
+          : directory + path.sep;
         for (let idx = 0; idx < entries.length; idx++) {
           const entry = entries[idx];
           const name = entry.name.toString();
-          const file = directory + path.sep + name;
+          const file = dirPrefix + name;
 
           const isSymbolicLink = entry.isSymbolicLink();
           if (ignore(file) || (!includeSymlinks && isSymbolicLink)) {
@@ -117,7 +121,8 @@ function find(
   if (roots.length > 0) {
     for (const root of roots) {
       const rootNormal = pathUtils.absoluteToNormal(root);
-      const isWithinRoot = !rootNormal.startsWith('..' + path.sep);
+      const isWithinRoot =
+        rootNormal !== '..' && !rootNormal.startsWith('..' + path.sep);
       search(root, rootNormal, isWithinRoot);
     }
   } else {
@@ -146,15 +151,7 @@ export default async function nodeCrawl(
   perfLogger?.point('nodeCrawl_start');
 
   const fileData = await new Promise<FileData>(resolve => {
-    find(
-      roots,
-      extensions,
-      ignore,
-      includeSymlinks,
-      rootDir,
-      console,
-      resolve,
-    );
+    find(roots, extensions, ignore, includeSymlinks, rootDir, console, resolve);
   });
 
   abortSignal?.throwIfAborted();
