@@ -51,7 +51,6 @@ import {FileProcessor} from './lib/FileProcessor';
 import {FileSystemChangeAggregator} from './lib/FileSystemChangeAggregator';
 import normalizePathSeparatorsToPosix from './lib/normalizePathSeparatorsToPosix';
 import normalizePathSeparatorsToSystem from './lib/normalizePathSeparatorsToSystem';
-import removeOverlappingRoots from './lib/removeOverlappingRoots';
 import {RootPathUtils} from './lib/RootPathUtils';
 import TreeFS from './lib/TreeFS';
 import {Watcher} from './Watcher';
@@ -347,7 +346,7 @@ export default class FileMap extends EventEmitter {
       plugins,
       retainAllFiles: options.retainAllFiles,
       rootDir: options.rootDir,
-      roots: removeOverlappingRoots(options.roots),
+      roots: Array.from(new Set(options.roots)),
     };
 
     this.#options = {
