@@ -16,6 +16,7 @@ import type {
   FileSystemListener,
 } from '../../flow-types';
 import type TreeFSType from '../TreeFS';
+import typeof * as PathModule from 'node:path';
 
 import H from '../../constants';
 
@@ -43,14 +44,11 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
         [p('foo/another.js'), [123, 2, 0, null, 0, 'another']],
         [p('foo/owndir'), [0, 0, 0, null, 'foo', null]],
         [p('foo/link-to-bar.js'), [0, 0, 0, null, 'bar.js', null]],
-        [
-          p('foo/link-to-another.js'),
-          [0, 0, 0, null, p('foo/another.js'), null],
-        ],
+        [p('foo/link-to-another.js'), [0, 0, 0, null, 'foo/another.js', null]],
         [p('../outside/external.js'), [0, 0, 0, null, 0, null]],
         [p('bar.js'), [234, 3, 0, null, 0, 'bar']],
         [p('link-to-foo'), [456, 0, 0, null, 'foo', null]],
-        [p('abs-link-out'), [456, 0, 0, null, p('../outside'), null]],
+        [p('abs-link-out'), [456, 0, 0, null, '../outside', null]],
         [p('root'), [0, 0, 0, null, '..', null]],
         [p('link-to-nowhere'), [123, 0, 0, null, 'nowhere', null]],
         [p('link-to-self'), [123, 0, 0, null, 'link-to-self', null]],
@@ -414,18 +412,18 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
             [
               [
                 p('a/1/package.json'),
-                [0, 0, 0, null, p('a/1/real-package.json'), null],
+                [0, 0, 0, null, 'a/1/real-package.json', null],
               ],
               [
                 p('a/2/package.json'),
-                [0, 0, 0, null, p('a/2/notexist-package.json'), null],
+                [0, 0, 0, null, 'a/2/notexist-package.json', null],
               ],
               [p('a/b/c/d/link-to-C'), [0, 0, 0, null, '', null]],
               [p('a/b/c/d/link-to-B'), [0, 0, 0, null, '..', null]],
-              [p('a/b/c/d/link-to-A'), [0, 0, 0, null, p('../..'), null]],
+              [p('a/b/c/d/link-to-A'), [0, 0, 0, null, '../..', null]],
               [
                 p('n_m/workspace/link-to-pkg'),
-                [0, 0, 0, null, p('../workspace-pkg'), null],
+                [0, 0, 0, null, '../workspace-pkg', null],
               ],
             ] as Array<[CanonicalPath, FileMetadata]>
           ).concat(
@@ -832,7 +830,7 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
           new Map<CanonicalPath, FileMetadata>([
             [
               p('newdir/link-to-link-to-bar.js'),
-              [0, 0, 0, null, p('foo/link-to-bar.js'), null],
+              [0, 0, 0, null, 'foo/link-to-bar.js', null],
             ],
             [p('foo/baz.js'), [0, 0, 0, null, 0, null]],
             [p('bar.js'), [999, 1, 0, null, 0, null]],
@@ -1313,7 +1311,7 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
           rootDir: 'C:\\project',
           files: new Map<CanonicalPath, FileMetadata>([
             ['..\\..\\D:\\external\\file.js', externalMeta],
-            ['link', [0, 0, 0, null, '..\\..\\D:\\external\\file.js', null]],
+            ['link', [0, 0, 0, null, '../../D:/external/file.js', null]],
           ]),
           processFile: () => {
             throw new Error('Not implemented');
@@ -1327,4 +1325,84 @@ describe.each([['win32'], ['posix']])('TreeFS on %s', platform => {
       });
     });
   }
+});
+
+describe('snapshot portability between operating systems', () => {
+  const rootFor = (platform: string) =>
+    platform === 'win32' ? 'C:\\project' : '/project';
+
+  function loadTreeFS(platform: string): Class<TreeFSType> {
+    jest.resetModules();
+    const nodePath = jest.requireActual<{
+      posix: PathModule,
+      win32: PathModule,
+    }>('path');
+    mockPathModule = platform === 'win32' ? nodePath.win32 : nodePath.posix;
+    return require('../TreeFS').default;
+  }
+
+  test.each([
+    ['posix', 'win32'],
+    ['win32', 'posix'],
+  ])('a snapshot built on %s follows symlinks on %s', (from, to) => {
+    const TreeFSFrom = loadTreeFS(from);
+    const sep = mockPathModule.sep;
+    const {RootPathUtils} = require('../RootPathUtils');
+    const normalizePathSeparatorsToPosix =
+      require('../normalizePathSeparatorsToPosix').default;
+    const linkPath = ['node_modules', 'pkg'].join(sep);
+    // Stored as FileMap stores a readlink result.
+    const storedTarget = normalizePathSeparatorsToPosix(
+      new RootPathUtils(rootFor(from)).resolveSymlinkToNormal(
+        linkPath,
+        ['.pnpm', 'pkg@1', 'node_modules', 'pkg'].join(sep),
+      ),
+    );
+    const snapshot = new TreeFSFrom({
+      rootDir: rootFor(from),
+      files: new Map<CanonicalPath, FileMetadata>([
+        [
+          [
+            'node_modules',
+            '.pnpm',
+            'pkg@1',
+            'node_modules',
+            'pkg',
+            'a.js',
+          ].join(sep),
+          [0, 0, 0, null, 0, null],
+        ],
+        [linkPath, [0, 0, 0, null, storedTarget, null]],
+      ]),
+      processFile: () => {
+        throw new Error('Not implemented');
+      },
+    }).getSerializableSnapshot();
+
+    const TreeFSTo = loadTreeFS(to);
+    const loaded = TreeFSTo.fromDeserializedSnapshot({
+      rootDir: rootFor(to),
+      // Snapshots are typed opaquely for the cache; this one came from
+      // getSerializableSnapshot, so it is a DirectoryNode.
+      // $FlowFixMe[incompatible-type]
+      fileSystemData: snapshot,
+      processFile: () => {
+        throw new Error('Not implemented');
+      },
+    });
+    const toPath = (...segments: Array<string>) =>
+      segments.join(mockPathModule.sep);
+    expect(loaded.lookup(toPath('node_modules', 'pkg', 'a.js'))).toMatchObject({
+      exists: true,
+      realPath: toPath(
+        rootFor(to),
+        'node_modules',
+        '.pnpm',
+        'pkg@1',
+        'node_modules',
+        'pkg',
+        'a.js',
+      ),
+    });
+  });
 });

@@ -21,6 +21,7 @@ import type {
 } from '../flow-types';
 
 import H from '../constants';
+import normalizePathSeparatorsToSystem from './normalizePathSeparatorsToSystem';
 import {RootPathUtils} from './RootPathUtils';
 import invariant from 'invariant';
 import path from 'node:path';
@@ -90,9 +91,12 @@ type MetadataIteratorOptions = Readonly<{
  * SYMLINKS:
  *
  * Symlinks are represented as nodes whose metadata contains their target,
- * already resolved to a normal path when the node was populated. If a symlink
- * is encountered during traversal, we restart traversal at the root node
- * targeting join(normal symlink target, remaining path suffix).
+ * already resolved to a normal path with POSIX separators when the node was
+ * populated. The target is the only path stored inside the tree, so it must
+ * not use system separators, or the snapshot would not be portable between
+ * operating systems. If a symlink is encountered during traversal, we restart
+ * traversal at the root node targeting join(normal symlink target, remaining
+ * path suffix).
  *
  * NODE TYPES:
  *
@@ -102,7 +106,7 @@ type MetadataIteratorOptions = Readonly<{
  *   - A regular file has node[H.SYMLINK] === 0
  *   - A symlink has node[H.SYMLINK] === 1 or
  *     typeof node[H.SYMLINK] === 'string', where a string is the target
- *     resolved to a normal path, if known.
+ *     resolved to a normal path with POSIX separators, if known.
  *
  * TERMINOLOGY:
  *
@@ -714,12 +718,15 @@ export default class TreeFS implements MutableFileSystem {
         }
 
         // Symlink in a directory path. Targets are stored already resolved
-        // to a normal path, so this is a read rather than a computation.
-        const normalSymlinkTarget = segmentNode[H.SYMLINK];
+        // to a normal path, with POSIX separators so that the snapshot is
+        // portable between operating systems.
+        const storedSymlinkTarget = segmentNode[H.SYMLINK];
         invariant(
-          typeof normalSymlinkTarget === 'string',
+          typeof storedSymlinkTarget === 'string',
           'Expected symlink target to be populated.',
         );
+        const normalSymlinkTarget =
+          normalizePathSeparatorsToSystem(storedSymlinkTarget);
         if (opts.collectLinkPaths) {
           opts.collectLinkPaths.add(
             this.#pathUtils.normalToAbsolute(currentPath),
