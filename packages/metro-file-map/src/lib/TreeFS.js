@@ -91,8 +91,11 @@ type MetadataIteratorOptions = Readonly<{
  * SYMLINKS:
  *
  * Symlinks are represented as nodes whose metadata contains their target,
- * already resolved to a normal path with POSIX separators when the node was
- * populated. The target is the only path stored inside the tree, so it must
+ * lexically resolved to a normal path with POSIX separators when the node was
+ * populated. Lexical resolution only interprets the literal target relative to
+ * the symlink's directory: it does not follow symlinks in the target, and the
+ * target need not exist, so it is a normalPath, not a canonicalPath (see
+ * TERMINOLOGY). The target is the only path stored inside the tree, so it must
  * not use system separators, or the snapshot would not be portable between
  * operating systems. If a symlink is encountered during traversal, we restart
  * traversal at the root node targeting join(normal symlink target, remaining
@@ -106,7 +109,7 @@ type MetadataIteratorOptions = Readonly<{
  *   - A regular file has node[H.SYMLINK] === 0
  *   - A symlink has node[H.SYMLINK] === 1 or
  *     typeof node[H.SYMLINK] === 'string', where a string is the target
- *     resolved to a normal path with POSIX separators, if known.
+ *     lexically resolved to a normal path with POSIX separators, if known.
  *
  * TERMINOLOGY:
  *
@@ -717,9 +720,9 @@ export default class TreeFS implements MutableFileSystem {
           };
         }
 
-        // Symlink in a directory path. Targets are stored already resolved
-        // to a normal path, with POSIX separators so that the snapshot is
-        // portable between operating systems.
+        // Symlink in a directory path. Targets are stored already lexically
+        // resolved to a normal path, with POSIX separators so that the
+        // snapshot is portable between operating systems.
         const storedSymlinkTarget = segmentNode[H.SYMLINK];
         invariant(
           typeof storedSymlinkTarget === 'string',

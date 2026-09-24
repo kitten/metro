@@ -178,6 +178,10 @@ export class RootPathUtils {
     symlinkNormalPath: string,
     readlinkResult: string,
   ): string {
+    // Lexically resolves the target against the symlink's directory. This is
+    // string manipulation only: symlinks within the target are not followed,
+    // and the target need not exist, so the result is not a real path.
+    //
     // readlink returns whatever the link was created with, which need not be
     // well-formed (e.g. '..', 'a/./b', 'a//b', or '/' separators on Windows),
     // so resolve with node:path. This runs once per symlink, when its node is
