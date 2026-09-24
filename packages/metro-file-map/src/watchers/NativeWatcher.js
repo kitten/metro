@@ -8,16 +8,16 @@
  * @format
  */
 
-import type {FSWatcher} from 'fs';
+import type {FSWatcher} from 'node:fs';
 
 import {AbstractWatcher} from './AbstractWatcher';
 import {includedByGlob, typeFromStat} from './common';
-import {promises as fsPromises, watch} from 'fs';
-import {platform} from 'os';
-import * as path from 'path';
+import debugModule from 'debug';
+import {promises as fsPromises, watch} from 'node:fs';
+import {platform} from 'node:os';
+import * as path from 'node:path';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:NativeWatcher');
+const debug = debugModule('Metro:NativeWatcher');
 
 const TOUCH_EVENT = 'touch';
 const DELETE_EVENT = 'delete';

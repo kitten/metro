@@ -32,9 +32,9 @@ import type {MockMapOptions} from '../plugins/MockPlugin';
 import typeof WorkerModule from '../worker';
 
 import {AbstractWatcher} from '../watchers/AbstractWatcher';
-import crypto from 'crypto';
-import * as path from 'path';
-import {serialize} from 'v8';
+import crypto from 'node:crypto';
+import * as path from 'node:path';
+import {serialize} from 'node:v8';
 
 jest.useRealTimers();
 
@@ -72,7 +72,7 @@ jest.mock('../crawlers/node', () => ({
 jest.mock('../crawlers/watchman', () => ({
   __esModule: true,
   default: jest.fn(options => {
-    const path = require('path');
+    const path = require('node:path');
 
     const {
       previousState,
@@ -177,7 +177,7 @@ jest.mock('fs', () => ({
     throw error;
   }),
   writeFileSync: jest.fn((path, data, options) => {
-    expect(options).toBe(require('v8').serialize ? undefined : 'utf8');
+    expect(options).toBe(require('node:v8').serialize ? undefined : 'utf8');
     mockFs[path] = data;
   }),
   promises: {
@@ -196,6 +196,7 @@ jest.mock('fs', () => ({
     }),
   },
 }));
+jest.mock('node:fs', () => jest.requireMock('fs'));
 
 const hasteImplModulePath = require.resolve('./haste_impl.js');
 let inBandWorker;
@@ -235,6 +236,8 @@ const assertFileSystemEqual = (fileSystem: FileSystem, fileData: FileData) => {
 // This normalizes them for the uses cases in this test
 const deepNormalize = <T extends unknown>(value: T): T => {
   // $FlowFixMe[method-unbinding]
+  /* $FlowFixMe[invalid-this-arg] Error exposed after fixing this typing
+   * unsoundness in flow */
   const stringTag = Object.prototype.toString.call(value);
   switch (stringTag) {
     case '[object Map]':
@@ -397,7 +400,6 @@ describe('FileMap', () => {
       const dependencyPlugin = new DependencyPlugin({
         dependencyExtractor: dependencyOverrides.dependencyExtractor ?? null,
         computeDependencies: true,
-        rootDir: defaultConfig.rootDir,
       });
       const hasteMap = new (require('../plugins/HastePlugin').default)({
         ...defaultHasteConfig,
@@ -894,6 +896,7 @@ describe('FileMap', () => {
       buildNewFileMap(
         {},
         {
+          // $FlowFixMe[cannot-spread-interface]
           console: {
             ...globalThis.console,
             warn: mockWarn,
@@ -901,6 +904,7 @@ describe('FileMap', () => {
           failValidationOnConflicts: true,
         },
         {
+          // $FlowFixMe[cannot-spread-interface]
           console: {
             ...globalThis.console,
             warn: mockWarn,
@@ -1460,7 +1464,7 @@ describe('FileMap', () => {
 
   test('distributes work across workers', async () => {
     const jestWorker = require('jest-worker').Worker;
-    const path = require('path');
+    const path = require('node:path');
     const dependencyExtractor = path.resolve(
       __dirname,
       '../plugins/dependencies/__tests__/mockDependencyExtractor.js',

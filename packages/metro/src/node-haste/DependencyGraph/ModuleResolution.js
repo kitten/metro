@@ -26,18 +26,15 @@ import type {
 import type {PackageForModule, PackageJson} from 'metro-resolver/private/types';
 
 import {codeFrameColumns} from '@babel/code-frame';
-import fs from 'fs';
 import invariant from 'invariant';
 import * as Resolver from 'metro-resolver';
 import createDefaultContext from 'metro-resolver/private/createDefaultContext';
-import path from 'path';
-import util from 'util';
-
-export type DirExistsFn = (filePath: string) => boolean;
+import fs from 'node:fs';
+import path from 'node:path';
+import util from 'node:util';
 
 type Options = Readonly<{
   assetExts: ReadonlySet<string>,
-  dirExists: DirExistsFn,
   disableHierarchicalLookup: boolean,
   doesFileExist: DoesFileExist,
   emptyModulePath: string,
@@ -54,6 +51,7 @@ type Options = Readonly<{
   reporter: Reporter,
   resolveAsset: ResolveAsset,
   resolveRequest: ?CustomResolver,
+  schemeResolvers: Readonly<{[scheme: string]: CustomResolver}>,
   sourceExts: ReadonlyArray<string>,
   unstable_conditionNames: ReadonlyArray<string>,
   unstable_conditionsByPlatform: Readonly<{
@@ -119,6 +117,7 @@ export class ModuleResolver {
       preferNativePlatform,
       resolveAsset,
       resolveRequest,
+      schemeResolvers,
       sourceExts,
       unstable_conditionNames,
       unstable_conditionsByPlatform,
@@ -151,6 +150,7 @@ export class ModuleResolver {
             resolveHastePackage: (name: string) =>
               this._options.getHastePackagePath(name, platform),
             resolveRequest,
+            schemeResolvers,
             sourceExts,
             unstable_conditionNames,
             unstable_conditionsByPlatform,
@@ -196,7 +196,12 @@ export class ModuleResolver {
         const dirPaths = error.dirPaths;
         const extraPaths = error.extraPaths;
         const displayDirPaths = dirPaths
-          .filter((dirPath: string) => this._options.dirExists(dirPath))
+          .filter((dirPath: string) => {
+            // Report only the directories resolution actually considered -
+            // `resolveFromNodeModulesPath` gates candidates on this same test.
+            const lookupResult = this._options.fileSystemLookup(dirPath);
+            return lookupResult.exists && lookupResult.type === 'd';
+          })
           .map(dirPath => path.relative(this._options.projectRoot, dirPath))
           .concat(extraPaths);
 
@@ -236,6 +241,9 @@ export class ModuleResolver {
         return {filePath: arbitrary, type: 'sourceFile'};
       case 'empty':
         return this._getEmptyModule();
+      case 'virtualModule':
+        // Reserved for future implementation.
+        throw new Error('Virtual modules are not yet implemented.');
       default:
         resolution.type as empty;
         throw new Error('invalid type');
@@ -291,7 +299,7 @@ export class UnableToResolveError extends Error {
   /**
    * Fixed type field in common with other Metro build errors.
    */
-  +type: 'UnableToResolveError' = 'UnableToResolveError';
+  readonly type: 'UnableToResolveError' = 'UnableToResolveError';
 
   constructor(
     originModulePath: string,

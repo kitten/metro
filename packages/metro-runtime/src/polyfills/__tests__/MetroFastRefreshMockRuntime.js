@@ -10,12 +10,12 @@
  */
 
 import type {DefineFn, RequireFn} from '../require';
-import type * as ReactModule from 'react';
+import typeof * as ReactModule from 'react';
 import typeof ReactRefreshRuntime from 'react-refresh/runtime';
 import typeof ReactTestRenderer from 'react-test-renderer';
 
 import {transformSync} from '@babel/core';
-import fs from 'fs';
+import fs from 'node:fs';
 
 type RuntimeGlobal = Object;
 
@@ -41,13 +41,24 @@ export class Runtime {
    */
   metroRequire: RequireFn;
 
+  /**
+   * Registers a lazy segment module definer (see require.js
+   * `__registerSegment`). Used to model bundles that define modules lazily,
+   * such as the Buck "plain bundle with switch" output.
+   */
+  registerSegment: (
+    segmentId: number,
+    moduleDefiner: (moduleId: number) => void,
+    moduleIds?: ?ReadonlyArray<number>,
+  ) => void;
+
   // Special modules
 
   /**
    * The instance of React running in this runtime. Conceptually equivalent to
    * require('react').
    */
-  React: typeof ReactModule;
+  React: ReactModule;
 
   /**
    * The React renderer running in this runtime. Conceptually equivalent to
@@ -83,6 +94,7 @@ export class Runtime {
     createModuleSystem(this.#global, /* __DEV__ */ true, this.#globalPrefix);
     this.define = this.#global[this.#globalPrefix + '__d'];
     this.metroRequire = this.#global[this.#globalPrefix + '__r'];
+    this.registerSegment = this.#global.__registerSegment;
 
     // Set up Fast Refresh. Adapted from `setUpReactRefresh.js` in React Native.
     jest.isolateModules(() => {
@@ -144,7 +156,12 @@ const moduleSystemCode = (() => {
   }).code;
 })();
 
-const createModuleSystem: (RuntimeGlobal, boolean, string) => unknown =
+const createModuleSystem: (
+  this: any,
+  RuntimeGlobal,
+  boolean,
+  string,
+) => unknown =
   // eslint-disable-next-line no-new-func
   new Function(
     'global',

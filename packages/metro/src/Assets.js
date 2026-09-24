@@ -11,48 +11,47 @@
 
 import type {AssetPath} from './node-haste/lib/AssetPaths';
 
+import {getImageDimensions} from './lib/imageSize';
 import {normalizePathSeparatorsToPosix} from './lib/pathUtils';
 import * as AssetPaths from './node-haste/lib/AssetPaths';
-import crypto from 'crypto';
-import fs from 'fs';
-// $FlowFixMe[untyped-import] image-size
-import getImageSize from 'image-size';
-import path from 'path';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type AssetInfo = {
-  +files: Array<string>,
-  +hash: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
+  readonly files: Array<string>,
+  readonly hash: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
 };
 
 export type AssetDataWithoutFiles = {
-  +__packager_asset: boolean,
-  +fileSystemLocation: string,
-  +hash: string,
-  +height: ?number,
-  +httpServerLocation: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
-  +width: ?number,
+  readonly __packager_asset: boolean,
+  readonly fileSystemLocation: string,
+  readonly hash: string,
+  readonly height: ?number,
+  readonly httpServerLocation: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
+  readonly width: ?number,
   ...
 };
 export type AssetDataFiltered = {
-  +__packager_asset: boolean,
-  +hash: string,
-  +height: ?number,
-  +httpServerLocation: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
-  +width: ?number,
+  readonly __packager_asset: boolean,
+  readonly hash: string,
+  readonly height: ?number,
+  readonly httpServerLocation: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
+  readonly width: ?number,
   ...
 };
 
-// Test extension against all types supported by image-size module.
-// If it's not one of these, we won't treat it as an image.
+// If an extension isn't explicitly supported here, we won't treat it as an
+// image.
 export function isAssetTypeAnImage(type: string): boolean {
   return (
     [
@@ -74,18 +73,20 @@ export function getAssetSize(
   type: string,
   content: Buffer,
   filePath: string,
-): ?{+width: number, +height: number} {
+): ?{readonly width: number, readonly height: number} {
   if (!isAssetTypeAnImage(type)) {
     return null;
   }
   if (content.length === 0) {
     throw new Error(`Image asset \`${filePath}\` cannot be an empty file.`);
   }
-  const {width, height} = getImageSize(content);
-  return {width, height};
+  return getImageDimensions(type, content, filePath);
 }
 
-export type AssetData = AssetDataWithoutFiles & {+files: Array<string>, ...};
+export type AssetData = AssetDataWithoutFiles & {
+  readonly files: Array<string>,
+  ...
+};
 
 export type AssetDataPlugin = (
   assetData: AssetData,
@@ -177,7 +178,7 @@ async function getAbsoluteAssetRecord(
 async function getAbsoluteAssetInfo(
   assetPath: string,
   platform: ?string = null,
-): Promise<AssetInfo> {
+): Promise<{assetInfo: AssetInfo, firstFileContent: Buffer}> {
   const nameData = AssetPaths.parse(
     assetPath,
     new Set(platform != null ? [platform] : []),
@@ -195,7 +196,10 @@ async function getAbsoluteAssetInfo(
     hasher.update(data);
   }
 
-  return {files, hash: hasher.digest('hex'), name, scales, type};
+  return {
+    assetInfo: {files, hash: hasher.digest('hex'), name, scales, type},
+    firstFileContent: fileData[0],
+  };
 }
 
 export async function getAssetData(
@@ -215,13 +219,13 @@ export async function getAssetData(
   // On Windows, change backslashes to slashes to get proper URL path from file path.
   assetUrlPath = normalizePathSeparatorsToPosix(assetUrlPath);
 
-  const isImage = isAssetTypeAnImage(path.extname(assetPath).slice(1));
-  const assetInfo = await getAbsoluteAssetInfo(assetPath, platform ?? null);
-
-  const isImageInput = assetInfo.files[0].includes('.zip/')
-    ? fs.readFileSync(assetInfo.files[0])
-    : assetInfo.files[0];
-  const dimensions = isImage ? getImageSize(isImageInput) : null;
+  const {assetInfo, firstFileContent} = await getAbsoluteAssetInfo(
+    assetPath,
+    platform ?? null,
+  );
+  const dimensions = isAssetTypeAnImage(assetInfo.type)
+    ? getAssetSize(assetInfo.type, firstFileContent, assetInfo.files[0])
+    : null;
   const scale = assetInfo.scales[0];
 
   const assetData = {
@@ -249,7 +253,10 @@ async function applyAssetDataPlugins(
 
   const [currentAssetPlugin, ...remainingAssetPlugins] = assetDataPlugins;
   // $FlowFixMe[unsupported-syntax]: impossible to type a dynamic require.
-  const assetPluginFunction: AssetDataPlugin = require(currentAssetPlugin);
+  const mod = require(currentAssetPlugin);
+  const assetPluginFunction: AssetDataPlugin =
+    mod.__esModule === true && 'default' in mod ? mod.default : mod;
+
   const resultAssetData = await assetPluginFunction(assetData);
   return await applyAssetDataPlugins(remainingAssetPlugins, resultAssetData);
 }
@@ -299,29 +306,36 @@ export async function getAsset(
   }
 
   // NOTE: If fileExistsInFileMap is not provided, we fall back to pathBelongsToRoots for backward compatibility, as getAsset is part of the public API.
-  if (fileExistsInFileMap != null) {
-    if (!fileExistsInFileMap(absolutePath)) {
-      throw new Error(
-        `'${relativePath}' could not be found, because it is not within the projectRoot or watchFolders, or it is blocked via the resolver.blockList config`,
-      );
-    }
-  } else {
-    if (!pathBelongsToRoots(absolutePath, [projectRoot, ...watchFolders])) {
-      throw new Error(
-        `'${relativePath}' could not be found, because it cannot be found in the project root or any watch folder`,
-      );
-    }
+  if (
+    fileExistsInFileMap == null &&
+    !pathBelongsToRoots(absolutePath, [projectRoot, ...watchFolders])
+  ) {
+    throw new Error(
+      `'${relativePath}' could not be found, because it cannot be found in the project root or any watch folder`,
+    );
   }
 
   const record = await getAbsoluteAssetRecord(absolutePath, platform ?? null);
 
   for (let i = 0; i < record.scales.length; i++) {
     if (record.scales[i] >= assetData.resolution) {
+      if (
+        fileExistsInFileMap != null &&
+        !fileExistsInFileMap(record.files[i])
+      ) {
+        continue;
+      }
       return fs.promises.readFile(record.files[i]);
     }
   }
 
-  return fs.promises.readFile(record.files[record.files.length - 1]);
+  const lastFile = record.files[record.files.length - 1];
+  if (fileExistsInFileMap != null && !fileExistsInFileMap(lastFile)) {
+    throw new Error(
+      `'${relativePath}' could not be found, because it is not within the projectRoot or watchFolders, or it is blocked via the resolver.blockList config`,
+    );
+  }
+  return fs.promises.readFile(lastFile);
 }
 
 function pathBelongsToRoots(

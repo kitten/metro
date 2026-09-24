@@ -20,14 +20,20 @@ import type {MetadataWorker, WorkerMessage, V8Serializable, DependencyExtractor}
 */
 
 module.exports = class DependencyExtractorWorker /*:: implements MetadataWorker */ {
-  /*:: + */ #dependencyExtractor /*: ?DependencyExtractor */;
+  // prettier-ignore
+  /*:: readonly  */ #dependencyExtractor /*: ?DependencyExtractor['extract'] */;
 
   constructor(
     {dependencyExtractor} /*: Readonly<{dependencyExtractor: ?string}> */,
   ) {
     if (dependencyExtractor != null) {
       // $FlowFixMe[unsupported-syntax] - dynamic require
-      this.#dependencyExtractor = require(dependencyExtractor);
+      const mod = require(dependencyExtractor);
+      let extract = mod?.extract; // CJS export or ESM named export
+      if (extract == null && mod?.__esModule === true) {
+        extract = mod.default?.extract;
+      }
+      this.#dependencyExtractor = extract;
     }
   }
 
@@ -40,7 +46,7 @@ module.exports = class DependencyExtractorWorker /*:: implements MetadataWorker 
 
     const dependencies =
       this.#dependencyExtractor != null
-        ? this.#dependencyExtractor.extract(
+        ? this.#dependencyExtractor(
             content,
             filePath,
             defaultDependencyExtractor.extract,

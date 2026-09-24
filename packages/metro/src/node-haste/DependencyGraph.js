@@ -14,6 +14,7 @@ import type {
   TransformResultDependency,
 } from '../DeltaBundler/types';
 import type {ResolverInputOptions} from '../shared/types';
+import type {ModuleResolver} from './DependencyGraph/ModuleResolution';
 import type {ConfigT} from 'metro-config';
 import type {
   ChangeEvent,
@@ -24,13 +25,10 @@ import type {
   WatcherStatus,
   default as MetroFileMap,
 } from 'metro-file-map';
-import type {FileSystemLookup} from 'metro-resolver';
 
 import createFileMap from './DependencyGraph/createFileMap';
-import {ModuleResolver} from './DependencyGraph/ModuleResolution';
+import createModuleResolver from './DependencyGraph/createModuleResolver';
 import {PackageCache} from './PackageCache';
-import EventEmitter from 'events';
-import fs from 'fs';
 import {
   AmbiguousModuleResolutionError,
   Logger,
@@ -39,8 +37,9 @@ import {
 import canonicalize from 'metro-core/private/canonicalize';
 import {DuplicateHasteCandidatesError} from 'metro-file-map';
 import {InvalidPackageError} from 'metro-resolver';
+import EventEmitter from 'node:events';
+import path from 'node:path';
 import nullthrows from 'nullthrows';
-import path from 'path';
 
 const {createActionStartEntry, createActionEndEntry, log} = Logger;
 
@@ -88,8 +87,8 @@ export default class DependencyGraph extends EventEmitter {
   constructor(
     config: ConfigT,
     options?: {
-      +hasReducedPerformance?: boolean,
-      +watch?: boolean,
+      readonly hasReducedPerformance?: boolean,
+      readonly watch?: boolean,
     },
   ) {
     super();
@@ -166,75 +165,11 @@ export default class DependencyGraph extends EventEmitter {
   }
 
   _createModuleResolver() {
-    const fileSystemLookup = (path: string): ReturnType<FileSystemLookup> => {
-      const result = this._fileSystem.lookup(path);
-      if (result.exists) {
-        return {
-          exists: true,
-          realPath: result.realPath,
-          type: result.type,
-        };
-      }
-      return {exists: false};
-    };
-
-    this._moduleResolver = new ModuleResolver({
-      assetExts: new Set(this._config.resolver.assetExts),
-      dirExists: (filePath: string) => {
-        try {
-          return fs.lstatSync(filePath).isDirectory();
-        } catch (e) {}
-        return false;
-      },
-      disableHierarchicalLookup:
-        this._config.resolver.disableHierarchicalLookup,
-      doesFileExist: this.doesFileExist,
-      emptyModulePath: this._config.resolver.emptyModulePath,
-      extraNodeModules: this._config.resolver.extraNodeModules,
-      fileSystemLookup,
-      getHasteModulePath: (name, platform) =>
-        this._hasteMap.getModule(name, platform, true),
-      getHastePackagePath: (name, platform) =>
-        this._hasteMap.getPackage(name, platform, true),
-      getPackage: (packageJsonPath: string) => {
-        try {
-          return (
-            this.#packageCache.getPackage(packageJsonPath).packageJson ?? null
-          );
-        } catch {
-          // Non-existence or malformed JSON, we treat both as non-existent
-          return null;
-        }
-      },
-      getPackageForModule: (absolutePath: string) =>
-        this.#packageCache.getPackageForModule(absolutePath),
-      mainFields: this._config.resolver.resolverMainFields,
-      nodeModulesPaths: this._config.resolver.nodeModulesPaths,
-      preferNativePlatform: true,
-      projectRoot: this._config.projectRoot,
-      reporter: this._config.reporter,
-      resolveAsset: (dirPath: string, assetName: string, extension: string) => {
-        const basePath = dirPath + path.sep + assetName;
-        const assets = [
-          basePath + extension,
-          ...this._config.resolver.assetResolutions.map(
-            resolution => basePath + '@' + resolution + 'x' + extension,
-          ),
-        ]
-          .map(assetPath => fileSystemLookup(assetPath).realPath)
-          .filter(Boolean);
-
-        return assets.length ? assets : null;
-      },
-      resolveRequest: this._config.resolver.resolveRequest,
-      sourceExts: this._config.resolver.sourceExts,
-      unstable_conditionNames: this._config.resolver.unstable_conditionNames,
-      unstable_conditionsByPlatform:
-        this._config.resolver.unstable_conditionsByPlatform,
-      unstable_enablePackageExports:
-        this._config.resolver.unstable_enablePackageExports,
-      unstable_incrementalResolution:
-        this._config.resolver.unstable_incrementalResolution,
+    this._moduleResolver = createModuleResolver({
+      config: this._config,
+      fileSystem: this._fileSystem,
+      hasteMap: this._hasteMap,
+      packageCache: this.#packageCache,
     });
   }
 
@@ -315,14 +250,14 @@ export default class DependencyGraph extends EventEmitter {
     resolverOptions: ResolverInputOptions,
 
     // TODO: Fold assumeFlatNodeModules into resolverOptions and add to graphId
-    {assumeFlatNodeModules}: {assumeFlatNodeModules: boolean} = {
+    extraOptions: {assumeFlatNodeModules: boolean} = {
       assumeFlatNodeModules: false,
     },
   ): BundlerResolution {
     const to = dependency.name;
     const isSensitiveToOriginFolder =
       // Resolution is always relative to the origin folder unless we assume a flat node_modules
-      !assumeFlatNodeModules ||
+      !extraOptions.assumeFlatNodeModules ||
       // Path requests are resolved relative to the origin folder
       to.includes('/') ||
       to === '.' ||

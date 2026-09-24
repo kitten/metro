@@ -19,6 +19,7 @@ import type {
   State,
 } from '../collectDependencies';
 import type {NodePath} from '@babel/traverse';
+import type {File as BabelNodeFile} from '@babel/types';
 import type {MetroBabelFileMetadata} from 'metro-babel-transformer';
 
 import collectDependencies from '../collectDependencies';
@@ -1605,6 +1606,91 @@ describe('optional dependencies', () => {
       {name: 'foo', data: expect.not.objectContaining({isOptional: true})},
     ]);
   });
+
+  describe('dynamic import with rejection handler', () => {
+    test('import().catch(handler) is optional', () => {
+      const ast = astFromCode(`
+        import('optional-async-a').catch(() => {});
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('import().then(handler, onReject) is optional', () => {
+      const ast = astFromCode(`
+        import('optional-async-a').then(() => {}, () => {});
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('import().then(...).then(...).catch(handler) is optional', () => {
+      const ast = astFromCode(`
+        import('optional-async-a')
+          .then(x => x)
+          .then(x => x)
+          .catch(() => {});
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('await import().catch(handler) is optional', () => {
+      const ast = astFromCode(`
+        async function f() {
+          await import('optional-async-a').catch(() => {});
+        }
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('try { await import() } catch {} is optional', () => {
+      const ast = astFromCode(`
+        async function f() {
+          try {
+            await import('optional-async-a');
+          } catch (e) {}
+        }
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('import().then(handler) without onReject is not optional', () => {
+      const ast = astFromCode(`
+        import('not-optional-async-a').then(() => {});
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('import().catch() with no handler argument is not optional', () => {
+      const ast = astFromCode(`
+        import('not-optional-async-a').catch();
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+
+    test('import().then(handler, null) is not optional (null/undefined onReject)', () => {
+      const ast = astFromCode(`
+        import('not-optional-async-a').then(() => {}, null);
+        import('not-optional-async-b').then(() => {}, undefined);
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 3);
+    });
+
+    test('import() detached from chain is not optional', () => {
+      const ast = astFromCode(`
+        const p = import('not-optional-async-a');
+        p.catch(() => {});
+      `);
+      const {dependencies} = collectDependencies(ast, opts);
+      validateDependencies(dependencies, 2);
+    });
+  });
 });
 
 test('uses the dependency transformer specified in the options to transform the dependency calls', () => {
@@ -1669,7 +1755,10 @@ function formatDependencyLocs(
   );
 }
 
-function adjustPosForCodeFrame(pos: {+column: number, +line: number}) {
+function adjustPosForCodeFrame(pos: {
+  readonly column: number,
+  readonly line: number,
+}) {
   return pos ? {...pos, column: pos.column + 1} : pos;
 }
 

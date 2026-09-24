@@ -10,22 +10,38 @@
 
 'use strict';
 
-jest.mock('fs', () => new (require('metro-memory-fs'))());
-jest.mock('image-size');
+jest.mock('node:fs', () => new (require('metro-memory-fs'))());
+jest.mock('../lib/imageSize', () => ({
+  getImageDimensions: jest.fn(() => ({
+    width: mockImageWidth,
+    height: mockImageHeight,
+  })),
+}));
 
 jest.useRealTimers();
 
-const {getAsset, getAssetData} = require('../Assets');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const {getAsset, getAssetData, getAssetSize} = require('../Assets');
+const getImageDimensions = require('../lib/imageSize').getImageDimensions;
+const crypto = require('node:crypto');
+const path = require('node:path');
+
+const fs = jest.requireMock('node:fs');
 
 const mockImageWidth = 300;
 const mockImageHeight = 200;
 
-require('image-size').mockReturnValue({
-  width: mockImageWidth,
-  height: mockImageHeight,
+describe('getAssetSize', () => {
+  test('returns null for non-image assets', () => {
+    expect(getAssetSize('mp4', Buffer.from('video'), '/root/video.mp4')).toBe(
+      null,
+    );
+  });
+
+  test('rejects empty image assets', () => {
+    expect(() =>
+      getAssetSize('png', Buffer.alloc(0), '/root/empty.png'),
+    ).toThrow('Image asset `/root/empty.png` cannot be an empty file.');
+  });
 });
 
 describe('getAsset', () => {
@@ -166,6 +182,81 @@ describe('getAsset', () => {
       getAssetStr('imgs/b.png', '/root', [], null, ['png'], () => false),
     ).rejects.toBeInstanceOf(Error);
   });
+
+  test('should serve scale variant when only scale variants exist and fileExistsInFileMap is provided', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    expect(
+      await getAssetStr(
+        'imgs/b@2x.png',
+        '/root',
+        [],
+        null,
+        ['png'],
+        () => true,
+      ),
+    ).toBe('b2 image');
+  });
+
+  test('should throw when fileExistsInFileMap rejects the resolved scale variant', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    await expect(
+      getAssetStr('imgs/b@2x.png', '/root', [], null, ['png'], () => false),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  test('should check fileExistsInFileMap against the resolved file, not the base path', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    const checkedPaths = [];
+    const result = await getAssetStr(
+      'imgs/b@2x.png',
+      '/root',
+      [],
+      null,
+      ['png'],
+      filePath => {
+        checkedPaths.push(filePath);
+        return true;
+      },
+    );
+
+    expect(result).toBe('b2 image');
+    expect(checkedPaths).toEqual(['/root/imgs/b@2x.png']);
+  });
+
+  test('should check fileExistsInFileMap for the fallback (highest scale) file', async () => {
+    writeImages({
+      'b@1x.png': 'b1 image',
+      'b@2x.png': 'b2 image',
+    });
+
+    const checkedPaths = [];
+    const result = await getAssetStr(
+      'imgs/b@3x.png',
+      '/root',
+      [],
+      null,
+      ['png'],
+      filePath => {
+        checkedPaths.push(filePath);
+        return true;
+      },
+    );
+
+    expect(result).toBe('b2 image');
+    expect(checkedPaths).toEqual(['/root/imgs/b@2x.png']);
+  });
 });
 
 describe('getAssetData', () => {
@@ -206,6 +297,18 @@ describe('getAssetData', () => {
         }),
       );
     });
+  });
+
+  test('parses dimensions from the first asset file buffer', async () => {
+    writeImages({'b@1x.png': 'b1 image', 'b@2x.png': 'b2 image'});
+
+    await getAssetData('/root/imgs/b.png', 'imgs/b.png', [], null, '/assets');
+
+    expect(getImageDimensions).toHaveBeenCalledWith(
+      'png',
+      Buffer.from('b1 image'),
+      '/root/imgs/b@1x.png',
+    );
   });
 
   test('should get assetData for non-png images', async () => {

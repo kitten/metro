@@ -12,10 +12,10 @@
 import TreeFS from '../../lib/TreeFS';
 import nodeCrawl from '../node';
 import watchmanCrawl from '../watchman';
-import {execSync} from 'child_process';
 import invariant from 'invariant';
-import os from 'os';
-import {join} from 'path';
+import {execSync} from 'node:child_process';
+import os from 'node:os';
+import {join} from 'node:path';
 
 jest.useRealTimers();
 
@@ -34,18 +34,10 @@ const isWatchmanOnPath = () => {
   }
 };
 
-const mockUseNativeFind = jest.fn();
-jest.mock('../node/hasNativeFindSupport', () => () => mockUseNativeFind());
-
 type Crawler = typeof nodeCrawl | typeof watchmanCrawl;
 
 const CRAWLERS: {[key: string]: ?Crawler} = {
-  'node-find': opts => {
-    mockUseNativeFind.mockResolvedValue(true);
-    return nodeCrawl(opts);
-  },
   'node-recursive': opts => {
-    mockUseNativeFind.mockResolvedValue(false);
     return nodeCrawl(opts);
   },
   watchman: isWatchmanOnPath() ? watchmanCrawl : null,
@@ -140,7 +132,6 @@ describe.each(Object.keys(CRAWLERS))(
           rootDir: FIXTURES_DIR,
           abortSignal: null,
           computeSha1: false,
-          forceNodeFilesystemAPI: false,
           onStatus: () => {},
         });
 

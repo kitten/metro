@@ -15,8 +15,8 @@ import type {
 } from '../flow-types';
 
 import {posixPathMatchesPattern} from './common';
-import EventEmitter from 'events';
-import * as path from 'path';
+import EventEmitter from 'node:events';
+import * as path from 'node:path';
 
 export type Listeners = Readonly<{
   onFileEvent: (event: WatcherBackendChangeEvent) => void,
@@ -24,11 +24,11 @@ export type Listeners = Readonly<{
 }>;
 
 export class AbstractWatcher implements WatcherBackend {
-  +root: string;
-  +ignored: ?RegExp;
-  +globs: ReadonlyArray<string>;
-  +dot: boolean;
-  +doIgnore: (path: string) => boolean;
+  readonly root: string;
+  readonly ignored: ?RegExp;
+  readonly globs: ReadonlyArray<string>;
+  readonly dot: boolean;
+  readonly doIgnore: (path: string) => boolean;
 
   #emitter: EventEmitter = new EventEmitter();
 

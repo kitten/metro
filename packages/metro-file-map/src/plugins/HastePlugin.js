@@ -32,7 +32,7 @@ import {chainComparators, compareStrings} from '../lib/sorting';
 import {DuplicateHasteCandidatesError} from './haste/DuplicateHasteCandidatesError';
 import getPlatformExtension from './haste/getPlatformExtension';
 import {HasteConflictsError} from './haste/HasteConflictsError';
-import path from 'path';
+import path from 'node:path';
 
 const EMPTY_OBJ: Readonly<{[string]: HasteMapItemMetadata}> = {};
 const EMPTY_MAP: ReadonlyMap<string, DuplicatesSet> = new Map();
@@ -55,19 +55,19 @@ export type HasteMapOptions = Readonly<{
 export default class HastePlugin
   implements HasteMap, FileMapPlugin<null, string | null>
 {
-  +name: 'haste' = 'haste';
+  readonly name: 'haste' = 'haste';
 
-  +#console: ?Console;
-  +#duplicates: DuplicatesIndex = new Map();
-  +#enableHastePackages: boolean;
-  +#failValidationOnConflicts: boolean;
+  readonly #console: ?Console;
+  readonly #duplicates: DuplicatesIndex = new Map();
+  readonly #enableHastePackages: boolean;
+  readonly #failValidationOnConflicts: boolean;
   #getModuleNameByPath: string => ?string;
-  +#hasteImplModulePath: ?string;
-  +#map: Map<string, HasteMapItem> = new Map();
-  +#pathUtils: RootPathUtils;
-  +#perfLogger: ?PerfLogger;
-  +#platforms: ReadonlySet<string>;
-  +#rootDir: Path;
+  readonly #hasteImplModulePath: ?string;
+  readonly #map: Map<string, HasteMapItem> = new Map();
+  readonly #pathUtils: RootPathUtils;
+  readonly #perfLogger: ?PerfLogger;
+  readonly #platforms: ReadonlySet<string>;
+  readonly #rootDir: Path;
 
   constructor(options: HasteMapOptions) {
     this.#console = options.console ?? global.console;
@@ -80,10 +80,11 @@ export default class HastePlugin
     this.#failValidationOnConflicts = options.failValidationOnConflicts;
   }
 
-  async initialize({
-    files,
-  }: FileMapPluginInitOptions<null, string | null>): Promise<void> {
+  async initialize(
+    opts: FileMapPluginInitOptions<null, string | null>,
+  ): Promise<void> {
     this.#perfLogger?.point('constructHasteMap_start');
+    const files = opts.files;
     let hasteFiles = 0;
     for (const {
       baseName,

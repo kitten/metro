@@ -21,11 +21,11 @@ import type {
 import H from '../constants';
 import {Worker} from '../worker';
 import {RootPathUtils} from './RootPathUtils';
+import debugModule from 'debug';
 import {Worker as JestWorker} from 'jest-worker';
-import {sep} from 'path';
+import {sep} from 'node:path';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:FileMap');
+const debug = debugModule('Metro:FileMap');
 
 type ProcessFileRequest = Readonly<{
   /**
@@ -40,8 +40,8 @@ type ProcessFileRequest = Readonly<{
 }>;
 
 interface AsyncWorker {
-  +processFile: WorkerMessage => Promise<WorkerMetadata>;
-  +end: () => Promise<void>;
+  readonly processFile: WorkerMessage => Promise<WorkerMetadata>;
+  readonly end: () => Promise<void>;
 }
 
 interface MaybeCodedError extends Error {

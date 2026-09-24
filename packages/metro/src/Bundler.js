@@ -11,8 +11,8 @@
 
 import type {TransformResultWithSource} from './DeltaBundler';
 import type {TransformOptions} from './DeltaBundler/Worker';
-import type EventEmitter from 'events';
 import type {ConfigT} from 'metro-config';
+import type EventEmitter from 'node:events';
 
 import Transformer from './DeltaBundler/Transformer';
 import DependencyGraph from './node-haste/DependencyGraph';
@@ -46,7 +46,12 @@ export default class Bundler {
           type: 'transformer_load_failed',
           error,
         });
+        throw error;
       });
+
+    // Observe initialization failures immediately so callers can await the
+    // original promise later without triggering an unhandled rejection.
+    this._initializedPromise.catch(() => {});
   }
 
   getWatcher(): EventEmitter {

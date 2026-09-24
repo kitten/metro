@@ -16,13 +16,13 @@ import RevisionNotFoundError from '../IncrementalBundler/RevisionNotFoundError';
 import {UnableToResolveError} from '../node-haste/DependencyGraph/ModuleResolution';
 import {codeFrameColumns} from '@babel/code-frame';
 import ErrorStackParser from 'error-stack-parser';
-import fs from 'fs';
 import {AmbiguousModuleResolutionError} from 'metro-core';
+import fs from 'node:fs';
 import serializeError from 'serialize-error';
 
 export type CustomError = Error &
   interface {
-    +type?: string,
+    readonly type?: string,
     filename?: string,
     lineNumber?: number,
     errors?: Array<{

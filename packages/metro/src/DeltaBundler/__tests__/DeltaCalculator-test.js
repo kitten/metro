@@ -61,12 +61,12 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
 
   beforeEach(async () => {
     if (osPlatform === 'win32') {
-      jest.doMock('path', () => jest.requireActual('path/win32'));
+      jest.doMock('node:path', () => jest.requireActual('node:path/win32'));
     } else {
-      jest.doMock('path', () => jest.requireActual('path'));
+      jest.doMock('node:path', () => jest.requireActual('node:path'));
     }
 
-    const {EventEmitter} = require('events');
+    const {EventEmitter} = require('node:events');
     const {Graph} = require('../Graph');
 
     traverseDependencies = jest.spyOn(Graph.prototype, 'traverseDependencies');
@@ -76,6 +76,8 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
     );
 
     fileWatcher = new EventEmitter();
+    /* $FlowFixMe[incompatible-type] Error exposed after fixing this typing
+     * unsoundness in flow */
     initialTraverseDependencies.mockImplementationOnce(async function <T>(
       this: Graph<T>,
       options: Options<T>,
@@ -131,6 +133,7 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
         inverseDependencies: new CountingSet(),
         output: [],
         path: p('/bundle'),
+        // $FlowFixMe[prop-missing]
         getSource: () => Buffer.of(),
       };
       fooModule = {
@@ -154,6 +157,7 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
         inverseDependencies: new CountingSet([p('/bundle')]),
         output: [],
         path: p('/foo'),
+        // $FlowFixMe[prop-missing]
         getSource: () => Buffer.of(),
       };
       barModule = {
@@ -161,6 +165,7 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
         inverseDependencies: new CountingSet([p('/bundle')]),
         output: [],
         path: p('/bar'),
+        // $FlowFixMe[prop-missing]
         getSource: () => Buffer.of(),
       };
       bazModule = {
@@ -168,6 +173,7 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
         inverseDependencies: new CountingSet([p('/bundle')]),
         output: [],
         path: p('/baz'),
+        // $FlowFixMe[prop-missing]
         getSource: () => Buffer.of(),
       };
       quxModule = {
@@ -175,6 +181,7 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
         inverseDependencies: new CountingSet([p('/foo')]),
         output: [],
         path: p('/qux'),
+        // $FlowFixMe[prop-missing]
         getSource: () => Buffer.of(),
       };
 
@@ -385,9 +392,12 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
       inverseDependencies: new CountingSet(),
       output: [],
       path: p('/qux'),
+      // $FlowFixMe[prop-missing]
       getSource: () => Buffer.of(),
     };
 
+    /* $FlowFixMe[incompatible-type] Error exposed after fixing this typing
+     * unsoundness in flow */
     traverseDependencies.mockImplementation(async function <T>(
       this: GraphType<T>,
       paths: ReadonlyArray<string>,
@@ -640,6 +650,41 @@ describe.each(['posix', 'win32'])('DeltaCalculator (%s)', osPlatform => {
       shallow: false,
     });
     expect(traverseDependencies).not.toHaveBeenCalled();
+  });
+
+  test('should emit a stable changeId for a change event', async () => {
+    await deltaCalculator.getDelta({reset: false, shallow: false});
+
+    const changeIds: Array<string> = [];
+    deltaCalculator.on('change', ({changeId}: {changeId?: string}) => {
+      if (changeId != null) {
+        changeIds.push(changeId);
+      }
+    });
+
+    // Emit a change event with multiple file changes
+    emitChange({modifiedFiles: ['foo', 'bar']});
+
+    expect(changeIds).toHaveLength(1);
+    expect(typeof changeIds[0]).toBe('string');
+    expect(changeIds[0].length).toBeGreaterThan(0);
+  });
+
+  test('should emit different changeIds for separate change events', async () => {
+    await deltaCalculator.getDelta({reset: false, shallow: false});
+
+    const changeIds: Array<string> = [];
+    deltaCalculator.on('change', ({changeId}: {changeId?: string}) => {
+      if (changeId != null) {
+        changeIds.push(changeId);
+      }
+    });
+
+    emitChange({modifiedFiles: ['foo']});
+    emitChange({modifiedFiles: ['bar']});
+
+    expect(changeIds).toHaveLength(2);
+    expect(changeIds[0]).not.toEqual(changeIds[1]);
   });
 
   test('should not mutate an existing graph when calling end()', async () => {
