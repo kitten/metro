@@ -44,8 +44,11 @@ function find(
     {} as {[string]: ?true},
   );
 
+  // `dirPrefix` is `directory` with a trailing separator, which only a root
+  // may already have (a filesystem root, '/' or 'C:\\').
   function search(
     directory: string,
+    dirPrefix: string,
     dirNormal: string,
     isWithinRoot: boolean,
   ): void {
@@ -57,10 +60,6 @@ function find(
           `Error "${err.code ?? err.message}" reading contents of "${directory}", skipping. Add this directory to your ignore list to exclude it.`,
         );
       } else {
-        // A filesystem root ('/', 'C:\\') already ends with a separator.
-        const dirPrefix = directory.endsWith(path.sep)
-          ? directory
-          : directory + path.sep;
         for (let idx = 0; idx < entries.length; idx++) {
           const entry = entries[idx];
           const name = entry.name.toString();
@@ -81,7 +80,12 @@ function find(
               : dirNormal + path.sep + name;
 
           if (entry.isDirectory()) {
-            search(file, childNormal, isWithinRoot || childNormal === '');
+            search(
+              file,
+              file + path.sep,
+              childNormal,
+              isWithinRoot || childNormal === '',
+            );
             continue;
           }
 
@@ -123,7 +127,12 @@ function find(
       const rootNormal = pathUtils.absoluteToNormal(root);
       const isWithinRoot =
         rootNormal !== '..' && !rootNormal.startsWith('..' + path.sep);
-      search(root, rootNormal, isWithinRoot);
+      search(
+        root,
+        root.endsWith(path.sep) ? root : root + path.sep,
+        rootNormal,
+        isWithinRoot,
+      );
     }
   } else {
     callback(result);
