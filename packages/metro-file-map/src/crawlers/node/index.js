@@ -54,8 +54,7 @@ function find(
           `Error "${err.code ?? err.message}" reading contents of "${directory}", skipping. Add this directory to your ignore list to exclude it.`,
         );
       } else {
-        for (let idx = 0; idx < entries.length; idx++) {
-          const entry = entries[idx];
+        for (const entry of entries) {
           const name = entry.name.toString();
           const file = dirPrefix + name;
 
