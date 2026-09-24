@@ -195,25 +195,6 @@ export class RootPathUtils {
     return normal.endsWith(path.sep) ? normal.slice(0, -1) : normal;
   }
 
-  // If a path is a direct ancestor of the project root (or the root itself),
-  // return a number with the degrees of separation, e.g. root=0, parent=1,..
-  // or null otherwise.
-  getAncestorOfRootIdx(normalPath: string): ?number {
-    if (normalPath === '') {
-      return 0;
-    }
-    if (normalPath === '..') {
-      return 1;
-    }
-    // Otherwise a *normal* path is only a root ancestor if it is a sequence of
-    // '../' segments followed by '..', so the length tells us the number of
-    // up fragments.
-    if (normalPath.endsWith(SEP_UP_FRAGMENT)) {
-      return (normalPath.length + 1) / 3;
-    }
-    return null;
-  }
-
   // Takes a normal and relative path, and joins them efficiently into a normal
   // path, including collapsing trailing '..' in the first part with leading
   // project root segments in the relative part.

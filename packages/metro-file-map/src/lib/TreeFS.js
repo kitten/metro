@@ -763,11 +763,7 @@ export default class TreeFS implements MutableFileSystem {
           collectAncestors &&
           !isLastSegment &&
           // No-op optimisation to bail out the common case of nothing to do.
-          // Note that ancestorOfRootIdx is assigned here, so it is only up to
-          // date within this branch - the block below is its sole reader.
-          ((ancestorOfRootIdx =
-            this.#pathUtils.getAncestorOfRootIdx(normalSymlinkTarget)) === 0 ||
-            joinedResult.collapsedSegments > 0)
+          (normalSymlinkTarget === '' || joinedResult.collapsedSegments > 0)
         ) {
           let node: MixedNode = this.#rootNode;
           let collapsedPath = '';
@@ -778,20 +774,12 @@ export default class TreeFS implements MutableFileSystem {
             /* for Flow, always true: */ isDirectory(node);
             i++
           ) {
-            if (
-              // Add the root only if the target is the root or we have
-              // collapsed segments.
-              i > 0 ||
-              ancestorOfRootIdx === 0 ||
-              joinedResult.collapsedSegments > 0
-            ) {
-              reverseAncestors.push({
-                ancestorOfRootIdx: i,
-                node,
-                normalPath: collapsedPath,
-                segmentName: this.#pathUtils.getBasenameOfNthAncestor(i),
-              });
-            }
+            reverseAncestors.push({
+              ancestorOfRootIdx: i,
+              node,
+              normalPath: collapsedPath,
+              segmentName: this.#pathUtils.getBasenameOfNthAncestor(i),
+            });
             node = node.get('..') ?? new Map();
             collapsedPath =
               collapsedPath === '' ? '..' : collapsedPath + path.sep + '..';
