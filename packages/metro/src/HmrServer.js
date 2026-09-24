@@ -30,26 +30,26 @@ import getGraphId from './lib/getGraphId';
 import parseBundleOptionsFromBundleRequestUrl from './lib/parseBundleOptionsFromBundleRequestUrl';
 import splitBundleOptions from './lib/splitBundleOptions';
 import * as transformHelpers from './lib/transformHelpers';
+import debugModule from 'debug';
 import {Logger} from 'metro-core';
 import nullthrows from 'nullthrows';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:HMR');
+const debug = debugModule('Metro:HMR');
 
 const {createActionStartEntry, createActionEndEntry, log} = Logger;
 
 export type Client = {
   optedIntoHMR: boolean,
   revisionIds: Array<RevisionId>,
-  +sendFn: string => void,
+  readonly sendFn: string => void,
 };
 
 type ClientGroup = {
-  +clients: Set<Client>,
+  readonly clients: Set<Client>,
   clientUrl: URL,
   revisionId: RevisionId,
-  +unlisten: () => void,
-  +graphOptions: GraphOptions,
+  readonly unlisten: () => void,
+  readonly graphOptions: GraphOptions,
 };
 
 function send(sendFns: Array<(string) => void>, message: HmrMessage): void {
@@ -181,8 +181,8 @@ export default class HmrServer<TClient extends Client> {
       this._clientGroups.set(id, clientGroup);
 
       let latestChangeEvent: ?{
-        +logger: ?RootPerfLogger,
-        +changeId: string,
+        readonly logger: ?RootPerfLogger,
+        readonly changeId: string,
       } = null;
 
       const debounceCallHandleFileChange = debounceAsyncQueue(async () => {
@@ -241,6 +241,10 @@ export default class HmrServer<TClient extends Client> {
         case 'log-opt-in':
           client.optedIntoHMR = true;
           break;
+        case 'heartbeat':
+          debug('Heartbeat received');
+          sendFn(String(message));
+          break;
         default:
           break;
       }
@@ -274,8 +278,8 @@ export default class HmrServer<TClient extends Client> {
     group: ClientGroup,
     options: {isInitialUpdate: boolean},
     changeEvent: ?{
-      +logger: ?RootPerfLogger,
-      +changeId?: string,
+      readonly logger: ?RootPerfLogger,
+      readonly changeId?: string,
     },
   ): Promise<void> {
     const logger = !options.isInitialUpdate ? changeEvent?.logger : null;
@@ -333,8 +337,8 @@ export default class HmrServer<TClient extends Client> {
     group: ClientGroup,
     options: {isInitialUpdate: boolean},
     changeEvent: ?{
-      +logger: ?RootPerfLogger,
-      +changeId?: string,
+      readonly logger: ?RootPerfLogger,
+      readonly changeId?: string,
     },
   ): Promise<HmrUpdateMessage | HmrErrorMessage> {
     const logger = !options.isInitialUpdate ? changeEvent?.logger : null;

@@ -16,14 +16,14 @@ import type {ConfigT} from 'metro-config';
 import {normalizePathSeparatorsToPosix} from '../lib/pathUtils';
 import getTransformCacheKey from './getTransformCacheKey';
 import WorkerFarm from './WorkerFarm';
-import assert from 'assert';
-import crypto from 'crypto';
-import fs from 'fs';
+import debugModule from 'debug';
 import {Cache, stableHash} from 'metro-cache';
-import path from 'path';
+import assert from 'node:assert';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:Transformer');
+const debug = debugModule('Metro:Transformer');
 
 type GetOrComputeSha1Fn = string => Promise<
   Readonly<{content?: Buffer, sha1: string}>,
@@ -108,7 +108,10 @@ export default class Transformer {
       }
     }
 
-    const localPath = path.relative(this._config.projectRoot, filePath);
+    const projectRelativePath = path.relative(
+      this._config.projectRoot,
+      filePath,
+    );
 
     const partialKey = stableHash([
       // This is the hash related to the global Bundler config.
@@ -117,7 +120,7 @@ export default class Transformer {
       // Project-relative, posix-separated path for portability. Necessary in
       // addition to content hash because transformers receive path as an
       // input, and may apply e.g. extension-based logic.
-      normalizePathSeparatorsToPosix(localPath),
+      normalizePathSeparatorsToPosix(projectRelativePath),
       customTransformOptions,
       dev,
       experimentalImportSupport,
@@ -166,7 +169,7 @@ export default class Transformer {
     }> = result
       ? {result, sha1}
       : await this._workerFarm.transform(
-          localPath,
+          projectRelativePath,
           transformerOptions,
           content,
         );

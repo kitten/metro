@@ -9,7 +9,7 @@
  * @oncall react_native
  */
 
-const path = require('path');
+const path = require('node:path');
 
 // TODO: fix on windows
 const BROKEN_ON_WINDOWS = [
@@ -42,6 +42,9 @@ const BROKEN_ON_WINDOWS = [
   'packages/metro-resolver/src/__tests__/browser-spec-test.js',
   'packages/metro-resolver/src/__tests__/package-exports-test.js',
   'packages/metro-resolver/src/__tests__/index-test.js',
+
+  // flow-api-translator line ending issues
+  'scripts/__tests__/api-snapshots-sync-test.js',
 
   // unclear issue
   'packages/metro/src/DeltaBundler/__tests__/DeltaCalculator-test.js',

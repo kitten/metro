@@ -24,8 +24,8 @@ import resolveAsset from './resolveAsset';
 import isAssetFile from './utils/isAssetFile';
 import {isSubpathDefinedInExportsLike} from './utils/isSubpathDefinedInExportsLike';
 import {matchSubpathFromExportsLike} from './utils/matchSubpathFromExportsLike';
-import toPosixPath from './utils/toPosixPath';
-import path from 'path';
+import {systemToPosixPath} from './utils/paths';
+import path from 'node:path';
 
 /**
  * Resolve a package subpath based on the entry points defined in the package's
@@ -134,7 +134,7 @@ export function resolvePackageTargetFromExports(
  * "exports" field lookup.
  */
 function getExportsSubpath(packageSubpath: string): string {
-  return packageSubpath === '' ? '.' : './' + toPosixPath(packageSubpath);
+  return packageSubpath === '' ? '.' : './' + systemToPosixPath(packageSubpath);
 }
 
 /**

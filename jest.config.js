@@ -11,10 +11,17 @@
 /** @type {import('jest').Config} **/
 module.exports = {
   filter: '<rootDir>/scripts/jestFilter.js',
-  modulePathIgnorePatterns: ['/node_modules/', 'packages/[^/]+/build/'],
+  modulePathIgnorePatterns: [
+    '/node_modules/',
+    'packages/[^/]+/build/',
+    '<rootDir>/\\.claude/',
+  ],
   snapshotFormat: {
     escapeString: true,
     printBasicPrototype: true,
+  },
+  moduleNameMapper: {
+    '^prettier$': '<rootDir>/scripts/nativePrettier.js',
   },
   testEnvironment: 'node',
   testRegex: '/__tests__/.*-test\\.js$',

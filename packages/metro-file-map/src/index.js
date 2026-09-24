@@ -22,6 +22,8 @@ import type {
   ChangeEventClock,
   ChangeEventMetadata,
   Console,
+  Crawler,
+  CrawlerFactory,
   CrawlerOptions,
   CrawlResult,
   FileData,
@@ -52,14 +54,14 @@ import normalizePathSeparatorsToSystem from './lib/normalizePathSeparatorsToSyst
 import {RootPathUtils} from './lib/RootPathUtils';
 import TreeFS from './lib/TreeFS';
 import {Watcher} from './Watcher';
-import EventEmitter from 'events';
-import {promises as fsPromises} from 'fs';
+import debugModule from 'debug';
 import invariant from 'invariant';
-import * as path from 'path';
-import {performance} from 'perf_hooks';
+import EventEmitter from 'node:events';
+import {promises as fsPromises} from 'node:fs';
+import * as path from 'node:path';
+import {performance} from 'node:perf_hooks';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:FileMap');
+const debug = debugModule('Metro:FileMap');
 
 export type {
   BuildParameters,
@@ -78,7 +80,6 @@ export type InputOptions = Readonly<{
   computeSha1?: ?boolean,
   enableSymlinks?: ?boolean,
   extensions: ReadonlyArray<string>,
-  forceNodeFilesystemAPI?: ?boolean,
   ignorePattern?: ?RegExp,
   plugins?: ReadonlyArray<InputFileMapPlugin>,
   retainAllFiles: boolean,
@@ -87,6 +88,11 @@ export type InputOptions = Readonly<{
 
   cacheManagerFactory?: ?CacheManagerFactory,
   console?: Console,
+  /**
+   * Replaces the built-in Watchman/node crawlers. Watch mode, if enabled, still
+   * uses the built-in watcher backends.
+   */
+  crawlerFactory?: ?CrawlerFactory,
   healthCheck: HealthCheckOptions,
   maxFilesPerWorker?: ?number,
   maxWorkers: number,
@@ -134,6 +140,7 @@ type InternalEnqueuedEvent = Readonly<
 >;
 
 export {DiskCacheManager} from './cache/DiskCacheManager';
+export {NoopCacheManager} from './cache/NoopCacheManager';
 export {default as DependencyPlugin} from './plugins/DependencyPlugin';
 export type {DependencyPluginOptions} from './plugins/DependencyPlugin';
 export {DuplicateHasteCandidatesError} from './plugins/haste/DuplicateHasteCandidatesError';
@@ -148,6 +155,11 @@ export type {
   CacheManagerFactoryOptions,
   CacheManagerWriteOptions,
   ChangeEvent,
+  Crawler,
+  CrawlerFactory,
+  CrawlerFactoryOptions,
+  CrawlerOptions,
+  CrawlResult,
   DependencyExtractor,
   WatcherStatus,
 } from './flow-types';
@@ -155,7 +167,7 @@ export type {
 // This should be bumped whenever a code change to `metro-file-map` itself
 // would cause a change to the cache data structure and/or content (for a given
 // filesystem state and build parameters).
-const CACHE_BREAKER = '11';
+const CACHE_BREAKER = '12';
 
 const CHANGE_INTERVAL = 30;
 
@@ -205,7 +217,8 @@ const WATCHMAN_REQUIRED_CAPABILITIES = [
  *   visited: boolean, // whether the file has been parsed or not.
  *   dependencies: Array<string>, // all relative dependencies of this file.
  *   sha1: ?string, // SHA-1 of the file, if requested via options.
- *   symlink: ?(1 | 0 | string), // Truthy if symlink, string is target
+ *   symlink: ?(1 | 0 | string), // Truthy if symlink, string is the target,
+ *                               // lexically resolved to a normal POSIX path
  * };
  *
  * // Modules can be targeted to a specific platform based on the file name.
@@ -249,18 +262,19 @@ const WATCHMAN_REQUIRED_CAPABILITIES = [
  */
 export default class FileMap extends EventEmitter {
   #buildPromise: ?Promise<BuildResult>;
-  +#cacheManager: CacheManager;
+  readonly #cacheManager: CacheManager;
   #canUseWatchmanPromise: Promise<boolean>;
   #changeID: number;
-  #changeInterval: ?IntervalID;
-  +#console: Console;
-  +#crawlerAbortController: AbortController;
-  +#fileProcessor: FileProcessor;
-  #healthCheckInterval: ?IntervalID;
-  +#options: InternalOptions;
-  +#pathUtils: RootPathUtils;
-  +#plugins: ReadonlyArray<IndexedPlugin>;
-  +#startupPerfLogger: ?PerfLogger;
+  #changeInterval: ?ReturnType<typeof setInterval>;
+  readonly #console: Console;
+  readonly #crawlerAbortController: AbortController;
+  readonly #fileProcessor: FileProcessor;
+  #healthCheckInterval: ?ReturnType<typeof setInterval>;
+  readonly #options: InternalOptions;
+  readonly #pathUtils: RootPathUtils;
+  readonly #crawler: ?Crawler;
+  readonly #plugins: ReadonlyArray<IndexedPlugin>;
+  readonly #startupPerfLogger: ?PerfLogger;
   #watcher: ?Watcher;
 
   static create(options: InputOptions): FileMap {
@@ -300,13 +314,23 @@ export default class FileMap extends EventEmitter {
 
     const indexedPlugins: Array<IndexedPlugin> = [];
     const pluginWorkers: Array<FileMapPluginWorker> = [];
+    const pluginDataIndices = new Map<string, number>();
     const plugins = options.plugins ?? [];
     for (const plugin of plugins) {
       const maybeWorker = plugin.getWorker();
-      indexedPlugins.push({
-        plugin,
-        dataIdx: maybeWorker != null ? dataSlot++ : null,
-      });
+      const dataIdx = maybeWorker != null ? dataSlot++ : null;
+      indexedPlugins.push({plugin, dataIdx});
+      if (dataIdx != null) {
+        // Crawlers address plugin data by name, so names must be unique among
+        // plugins holding a slot - otherwise a crawler would silently write to
+        // the shadowed plugin's slot.
+        invariant(
+          !pluginDataIndices.has(plugin.name),
+          'metro-file-map: Duplicate plugin name: %s',
+          plugin.name,
+        );
+        pluginDataIndices.set(plugin.name, dataIdx);
+      }
       if (maybeWorker != null) {
         pluginWorkers.push(maybeWorker);
       }
@@ -318,7 +342,6 @@ export default class FileMap extends EventEmitter {
       computeSha1: options.computeSha1 || false,
       enableSymlinks: options.enableSymlinks || false,
       extensions: options.extensions,
-      forceNodeFilesystemAPI: !!options.forceNodeFilesystemAPI,
       ignorePattern,
       plugins,
       retainAllFiles: options.retainAllFiles,
@@ -335,6 +358,10 @@ export default class FileMap extends EventEmitter {
       watch: !!options.watch,
       watchmanDeferStates: options.watchmanDeferStates ?? [],
     };
+
+    this.#crawler = options.crawlerFactory
+      ? options.crawlerFactory.call(null, {buildParameters, pluginDataIndices})
+      : null;
 
     const cacheFactoryOptions: CacheManagerFactoryOptions = {
       buildParameters,
@@ -515,7 +542,6 @@ export default class FileMap extends EventEmitter {
       computeSha1,
       enableSymlinks,
       extensions,
-      forceNodeFilesystemAPI,
       ignorePattern,
       retainAllFiles,
       roots,
@@ -528,9 +554,9 @@ export default class FileMap extends EventEmitter {
       abortSignal: this.#crawlerAbortController.signal,
       computeSha1,
       console: this.#console,
+      crawl: this.#crawler,
       enableSymlinks,
       extensions,
-      forceNodeFilesystemAPI,
       healthCheckFilePrefix: this.#options.healthCheck.filePrefix,
       // TODO: Refactor out the two different ignore strategies here.
       ignoreForCrawl: filePath => {
@@ -544,7 +570,9 @@ export default class FileMap extends EventEmitter {
       previousState,
       rootDir,
       roots,
-      useWatchman: await this.#shouldUseWatchman(),
+      // A supplied crawler makes the Watchman capability probe - which spawns
+      // watchman - pointless.
+      useWatchman: this.#crawler == null && (await this.#shouldUseWatchman()),
       watch,
       watchmanDeferStates,
     });
@@ -565,7 +593,9 @@ export default class FileMap extends EventEmitter {
         .readlink(this.#pathUtils.normalToAbsolute(normalPath))
         .then(symlinkTarget => {
           fileMetadata[H.VISITED] = 1;
-          fileMetadata[H.SYMLINK] = symlinkTarget;
+          fileMetadata[H.SYMLINK] = normalizePathSeparatorsToPosix(
+            this.#pathUtils.resolveSymlinkToNormal(normalPath, symlinkTarget),
+          );
         });
     }
     return null;
@@ -1043,9 +1073,11 @@ export default class FileMap extends EventEmitter {
   }
 
   async end(): Promise<void> {
+    // $FlowFixMe[sketchy-null-number]
     if (this.#changeInterval) {
       clearInterval(this.#changeInterval);
     }
+    // $FlowFixMe[sketchy-null-number]
     if (this.#healthCheckInterval) {
       clearInterval(this.#healthCheckInterval);
     }
@@ -1109,7 +1141,10 @@ export default class FileMap extends EventEmitter {
 }
 
 // TODO: Replace with it.map() from Node 22+
-const mapIterable: <T, S>(Iterable<T>, (T) => S) => Iterator<S> = (it, fn) =>
+const mapIterable: <T, S>(Iterable<T>, (T) => S) => IteratorObject<S> = (
+  it,
+  fn,
+) =>
   (function* mapped() {
     for (const item of it) {
       yield fn(item);

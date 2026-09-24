@@ -10,6 +10,7 @@
 
 import type {
   Console,
+  Crawler,
   CrawlerOptions,
   CrawlResult,
   Path,
@@ -25,14 +26,14 @@ import {TOUCH_EVENT} from './watchers/common';
 import FallbackWatcher from './watchers/FallbackWatcher';
 import NativeWatcher from './watchers/NativeWatcher';
 import WatchmanWatcher from './watchers/WatchmanWatcher';
-import EventEmitter from 'events';
-import * as fs from 'fs';
+import debugModule from 'debug';
+import EventEmitter from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import {performance} from 'node:perf_hooks';
 import nullthrows from 'nullthrows';
-import * as path from 'path';
-import {performance} from 'perf_hooks';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:Watcher');
+const debug = debugModule('Metro:Watcher');
 
 const MAX_WAIT_TIME = 240000;
 
@@ -47,9 +48,18 @@ type WatcherOptions = {
   abortSignal: AbortSignal,
   computeSha1: boolean,
   console: Console,
+  /**
+   * Replaces the built-in Watchman/node crawlers for all crawling, including
+   * the scoped re-crawl issued on a directory-rename event in watch mode -
+   * which passes `subpath` and narrowed `roots` that the crawler is expected to
+   * honour, exactly as the built-ins do.
+   *
+   * Watching itself is unaffected: change events still come from the built-in
+   * watcher backends.
+   */
+  crawl?: ?Crawler,
   enableSymlinks: boolean,
   extensions: ReadonlyArray<string>,
-  forceNodeFilesystemAPI: boolean,
   healthCheckFilePrefix: string,
   ignoreForCrawl: (filePath: string) => boolean,
   ignorePatternForWatch: RegExp,
@@ -72,11 +82,13 @@ export type HealthCheckResult =
 export class Watcher extends EventEmitter {
   #activeWatcher: ?string;
   #backends: ReadonlyArray<WatcherBackend> = [];
-  +#instanceId: number;
+  readonly #instanceId: number;
   #nextHealthCheckId: number = 0;
-  +#options: WatcherOptions;
-  +#pendingHealthChecks: Map</* basename */ string, /* resolve */ () => void> =
-    new Map();
+  readonly #options: WatcherOptions;
+  readonly #pendingHealthChecks: Map<
+    /* basename */ string,
+    /* resolve */ () => void,
+  > = new Map();
 
   constructor(options: WatcherOptions) {
     super();
@@ -120,8 +132,13 @@ export class Watcher extends EventEmitter {
     const ignoreForCrawl = (filePath: string) =>
       options.ignoreForCrawl(filePath) ||
       path.basename(filePath).startsWith(this.#options.healthCheckFilePrefix);
-    const crawl = useWatchman ? watchmanCrawl : nodeCrawl;
+    // A supplied crawler is, by construction, not `watchmanCrawl`, so it takes
+    // the unwrapped branch below: no node-crawler fallback, failures propagate.
+    const crawl = options.crawl ?? (useWatchman ? watchmanCrawl : nodeCrawl);
     let crawler = crawl === watchmanCrawl ? 'watchman' : 'node';
+    if (options.crawl != null) {
+      crawler = 'custom';
+    }
 
     options.abortSignal.throwIfAborted();
 
@@ -131,7 +148,6 @@ export class Watcher extends EventEmitter {
       console: options.console,
       includeSymlinks: options.enableSymlinks,
       extensions: options.extensions,
-      forceNodeFilesystemAPI: options.forceNodeFilesystemAPI,
       ignore: ignoreForCrawl,
       onStatus: status => {
         this.emit('status', status);

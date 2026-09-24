@@ -18,8 +18,8 @@ import DeltaBundler from '../DeltaBundler';
 import HmrServer from '../HmrServer';
 import IncrementalBundler from '../IncrementalBundler';
 import getGraphId from '../lib/getGraphId';
-import EventEmitter from 'events';
 import {mergeConfig} from 'metro-config';
+import EventEmitter from 'node:events';
 
 const {
   getDefaultConfig: {getDefaultValues},
@@ -29,7 +29,7 @@ jest.mock('../lib/transformHelpers', () => ({
   getResolveDependencyFn:
     () => (from: string, to: TransformResultDependency) => ({
       type: 'sourceFile',
-      filePath: `${require('path').resolve(from, to.name)}.js`,
+      filePath: `${require('node:path').resolve(from, to.name)}.js`,
     }),
 }));
 
@@ -388,7 +388,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -472,7 +472,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -531,7 +531,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -695,6 +695,6 @@ describe('HmrServer', () => {
 });
 
 class TransformError extends SyntaxError {
-  +type: string = 'TransformError';
+  readonly type: string = 'TransformError';
   filename: string;
 }

@@ -14,11 +14,6 @@ import type {ReadOnlyGraph} from './DeltaBundler';
 import type {ServerOptions} from './Server';
 import type {BuildOptions, OutputOptions, RequestOptions} from './shared/types';
 import type {HandleFunction} from 'connect';
-import type {Server as HttpServer} from 'http';
-import type {
-  Server as HttpsServer,
-  ServerOptions as HttpsServerOptions,
-} from 'https';
 import type {TransformProfile} from 'metro-babel-transformer';
 import type {
   ConfigT,
@@ -28,6 +23,11 @@ import type {
 } from 'metro-config';
 import type {CustomResolverOptions} from 'metro-resolver';
 import type {CustomTransformOptions} from 'metro-transform-worker';
+import type {Server as HttpServer} from 'node:http';
+import type {
+  Server as HttpsServer,
+  ServerOptions as HttpsServerOptions,
+} from 'node:https';
 import type {Server as WebSocketServer} from 'ws';
 import typeof Yargs from 'yargs';
 
@@ -37,14 +37,11 @@ import makeServeCommand from './commands/serve';
 import MetroHmrServer from './HmrServer';
 import IncrementalBundler from './IncrementalBundler';
 import createWebsocketServer from './lib/createWebsocketServer';
+import getSchemeResolvers from './lib/getSchemeResolvers';
 import JsonReporter from './lib/JsonReporter';
 import TerminalReporter from './lib/TerminalReporter';
 import MetroServer from './Server';
 import * as outputBundle from './shared/output/bundle';
-import chalk from 'chalk';
-import fs from 'fs';
-import http from 'http';
-import https from 'https';
 import {
   getDefaultConfig,
   loadConfig,
@@ -52,7 +49,11 @@ import {
   resolveConfig,
 } from 'metro-config';
 import {Terminal} from 'metro-core';
-import net from 'net';
+import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import util from 'node:util';
 import nullthrows from 'nullthrows';
 
 const DEFAULTS = MetroServer.DEFAULT_BUNDLE_OPTIONS;
@@ -72,7 +73,7 @@ export type RunMetroOptions = {
 export type RunServerOptions = Readonly<{
   hasReducedPerformance?: boolean,
   host?: string,
-  onError?: (Error & {code?: string}) => void,
+  onError?: (err: Error & {code?: string}) => void,
   onReady?: (server: HttpServer | HttpsServer) => void,
   onClose?: () => void,
   secureServerOptions?: HttpsServerOptions,
@@ -114,9 +115,9 @@ export type RunBuildOptions = {
   minify?: boolean,
   output?: Readonly<{
     build: (
-      MetroServer,
-      RequestOptions,
-      void | BuildOptions,
+      server: MetroServer,
+      requestOptions: RequestOptions,
+      buildOptions?: BuildOptions,
     ) => Promise<{
       code: string,
       map: string,
@@ -124,13 +125,13 @@ export type RunBuildOptions = {
       ...
     }>,
     save: (
-      {
+      output: {
         code: string,
         map: string,
         ...
       },
-      OutputOptions,
-      (logMessage: string) => void,
+      opts: OutputOptions,
+      logger: (logMessage: string) => void,
     ) => Promise<unknown>,
     ...
   }>,
@@ -153,7 +154,7 @@ type BuildCommandOptions = Readonly<{[string]: unknown}> | null;
 type ServeCommandOptions = Readonly<{[string]: unknown}> | null;
 type DependenciesCommandOptions = Readonly<{[string]: unknown}> | null;
 
-export {Terminal, JsonReporter, TerminalReporter};
+export {Terminal, JsonReporter, TerminalReporter, getSchemeResolvers};
 
 export type {AssetData} from './Assets';
 export type {
@@ -275,7 +276,9 @@ export const createConnectMiddleware = async function (
 
 export const runServer = async (
   config: ConfigT,
-  {
+  opts: RunServerOptions = {},
+): Promise<RunServerResult> => {
+  const {
     hasReducedPerformance = false,
     host,
     onError,
@@ -289,14 +292,13 @@ export const runServer = async (
     waitForBundler = false,
     websocketEndpoints: userWebsocketEndpoints = {},
     watch,
-  }: RunServerOptions = {},
-): Promise<RunServerResult> => {
+  } = opts;
   await earlyPortCheck(host, config.server.port);
 
   if (secure != null || secureCert != null || secureKey != null) {
     // eslint-disable-next-line no-console
     console.warn(
-      chalk.inverse.yellow.bold(' DEPRECATED '),
+      util.styleText(['inverse', 'yellow', 'bold'], ' DEPRECATED '),
       'The `secure`, `secureCert`, and `secureKey` options are now deprecated. ' +
         'Please use the `secureServerOptions` object instead to pass options to ' +
         "Metro's https development server, or `config.server.tls` in Metro's configuration",
@@ -421,7 +423,9 @@ export const runServer = async (
 
 export const runBuild = async (
   config: ConfigT,
-  {
+  opts: RunBuildOptions,
+): Promise<RunBuildResult> => {
+  const {
     assets = false,
     customResolverOptions = DEFAULTS.customResolverOptions,
     customTransformOptions = DEFAULTS.customTransformOptions,
@@ -439,8 +443,7 @@ export const runBuild = async (
     sourceMap = false,
     sourceMapUrl,
     unstable_transformProfile = DEFAULTS.unstable_transformProfile,
-  }: RunBuildOptions,
-): Promise<RunBuildResult> => {
+  } = opts;
   const metroServer = await runMetro(config, {
     watch: false,
   });
@@ -512,16 +515,16 @@ export const runBuild = async (
 
 export const buildGraph = async function (
   config: InputConfigT,
-  {
+  opts: BuildGraphOptions,
+): Promise<ReadOnlyGraph<>> {
+  const {
     customTransformOptions = Object.create(null),
     dev = false,
     entries,
     minify = false,
-    onProgress,
     platform = 'web',
     type = 'module',
-  }: BuildGraphOptions,
-): Promise<ReadOnlyGraph<>> {
+  } = opts;
   const mergedConfig = await getConfig(config);
 
   const bundler = new IncrementalBundler(mergedConfig);
@@ -587,23 +590,3 @@ async function earlyPortCheck(host: void | string, port: number) {
     await new Promise(resolve => server.close(() => resolve()));
   }
 }
-
-/**
- * Backwards-compatibility with CommonJS consumers using interopRequireDefault.
- * Do not add to this list.
- *
- * @deprecated Default import from 'metro' is deprecated, use named exports.
- */
-export default {
-  attachMetroCli,
-  runServer,
-  Terminal,
-  JsonReporter,
-  TerminalReporter,
-  loadConfig,
-  mergeConfig,
-  resolveConfig,
-  createConnectMiddleware,
-  runBuild,
-  buildGraph,
-};

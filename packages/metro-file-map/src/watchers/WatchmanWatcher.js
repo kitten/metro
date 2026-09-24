@@ -24,13 +24,13 @@ import normalizePathSeparatorsToSystem from '../lib/normalizePathSeparatorsToSys
 import {AbstractWatcher} from './AbstractWatcher';
 import * as common from './common';
 import RecrawlWarning from './RecrawlWarning';
-import assert from 'assert';
-import {createHash} from 'crypto';
+import debugModule from 'debug';
 import watchman from 'fb-watchman';
 import invariant from 'invariant';
+import assert from 'node:assert';
+import {createHash} from 'node:crypto';
 
-// eslint-disable-next-line import/no-commonjs
-const debug = require('debug')('Metro:WatchmanWatcher');
+const debug = debugModule('Metro:WatchmanWatcher');
 
 const DELETE_EVENT = common.DELETE_EVENT;
 const TOUCH_EVENT = common.TOUCH_EVENT;
@@ -41,12 +41,12 @@ const SUB_PREFIX = 'metro-file-map';
  */
 export default class WatchmanWatcher extends AbstractWatcher {
   #client: Client;
-  +subscriptionName: string;
+  readonly subscriptionName: string;
   #watchProjectInfo: ?Readonly<{
     relativePath: string,
     root: string,
   }>;
-  +#watchmanDeferStates: ReadonlyArray<string>;
+  readonly #watchmanDeferStates: ReadonlyArray<string>;
   #deferringStates: ?Set<string> = null;
 
   constructor(dir: string, opts: WatcherOptions) {

@@ -12,7 +12,7 @@
 import type {ResolutionContext} from '../index';
 import type {PackageJson} from '../types';
 
-import path from 'path';
+import path from 'node:path';
 
 /**
  * Data structure approximating a file tree. Should be populated with complete
@@ -84,6 +84,7 @@ export function createResolutionContext(
     resolveAsset: (filePath: string) => null,
     resolveHasteModule: (name: string) => null,
     resolveHastePackage: (name: string) => null,
+    schemeResolvers: {},
     sourceExts: ['js', 'jsx', 'json', 'ts', 'tsx'],
     unstable_conditionNames: ['require'],
     unstable_conditionsByPlatform: {
