@@ -83,6 +83,25 @@ jest.mock('graceful-fs', () => {
             ]),
           0,
         );
+      } else if (slash(dir) === '/project/prototype') {
+        setTimeout(
+          () =>
+            callback(
+              null,
+              [
+                'a.js',
+                'b.constructor',
+                'c.toString',
+                'd.__proto__',
+                'e.hasOwnProperty',
+              ].map(name => ({
+                isDirectory: () => false,
+                isSymbolicLink: () => false,
+                name,
+              })),
+            ),
+          0,
+        );
       } else if (slash(dir) === '/project') {
         setTimeout(
           () =>
@@ -297,6 +316,22 @@ describe('node crawler', () => {
         roots: ['/project/fruits'],
       }),
     ).rejects.toThrow(err);
+  });
+
+  test('only crawls files with a listed extension', async () => {
+    nodeCrawl = require('../node').default;
+
+    const {changedFiles} = await nodeCrawl({
+      console: global.console,
+      previousState: {fileSystem: emptyFS},
+      extensions: ['js'],
+      ignore: pearMatcher,
+      rootDir,
+      roots: ['/project/prototype'],
+    });
+
+    // Extensions that name Object.prototype properties are not listed.
+    expect([...changedFiles.keys()]).toEqual([normalize('prototype/a.js')]);
   });
 
   test('crawls a root that is the parent of rootDir', async () => {

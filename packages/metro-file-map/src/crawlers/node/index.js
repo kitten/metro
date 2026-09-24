@@ -36,13 +36,7 @@ function find(
   let activeCalls = 0;
   const pathUtils = new RootPathUtils(rootDir);
 
-  const exts = extensions.reduce(
-    (acc, ext) => {
-      acc[ext] = true;
-      return acc;
-    },
-    {} as {[string]: ?true},
-  );
+  const exts = new Set(extensions);
 
   // `dirPrefix` is `directory` with a trailing separator, which only a root
   // may already have (a filesystem root, '/' or 'C:\\').
@@ -90,7 +84,7 @@ function find(
           }
 
           const ext = path.extname(file).substr(1);
-          if (!isSymbolicLink && !exts[ext]) {
+          if (!isSymbolicLink && !exts.has(ext)) {
             continue;
           }
 
