@@ -298,9 +298,14 @@ describe.each([['win32'], ['posix']])('RootPathUtils on %s', platform => {
 
     // A filesystem root is the one absolute target that consists only of a
     // separator, so it must not be trimmed before we test for absoluteness.
+    // Relative targets may also reach the filesystem root, or pass it: '..' at
+    // the filesystem root is the filesystem root itself.
     test.each([
       ['link', p('/'), p('../..')],
       [p('a/link'), p('/'), p('../..')],
+      ['link', '../..', p('../..')],
+      ['link', '../../../../..', p('../..')],
+      [p('a/link'), '../../../../../..', p('../..')],
     ])(
       'resolves filesystem root target (%s -> %s) to %s',
       (symlinkPath, readlinkResult, expected) => {
