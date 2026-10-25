@@ -772,8 +772,10 @@ export const getCacheKey = (
     require.resolve(minifierPath),
     require.resolve('./utils/getMinifier'),
     require.resolve('./utils/assetTransformer'),
+    require.resolve('metro/private/ModuleGraph/worker/collectDependencies'),
     require.resolve('metro/private/ModuleGraph/worker/generateImportNames'),
     require.resolve('metro/private/ModuleGraph/worker/JsFileWrapping'),
+    require.resolve('metro/private/ModuleGraph/worker/importLocationsPlugin'),
     ...metroTransformPlugins.getTransformPluginCacheKeyFiles(),
     // Transform output depends on the installed version of Metro's own
     // `@babel/runtime`, which is read from its `package.json`.
