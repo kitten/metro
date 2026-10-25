@@ -138,7 +138,7 @@ export async function buildSubgraph<T>(
       ...resolutionResult,
     });
 
-    const visitPromises: Promise[] = [];
+    const visitPromises: Array<Promise<void>> = [];
     for (const dependency of resolutionResult.dependencies.values()) {
       if (
         isResolvedDependency(dependency) &&
@@ -149,7 +149,9 @@ export async function buildSubgraph<T>(
           visit(
             dependency.absolutePath,
             resolutionResult.virtualSources.get(dependency.data.data.key),
-          ).catch(error => errors.set(dependency.absolutePath, error)),
+          ).catch(error => {
+            errors.set(dependency.absolutePath, error);
+          }),
         );
       }
     }
